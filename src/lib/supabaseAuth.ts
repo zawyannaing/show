@@ -15,9 +15,23 @@ export { useAuth } from '../hooks/useAuth';
 
 // Built-in default admin emails (can be extended via VITE_ADMIN_EMAILS in .env)
 const DEFAULT_ADMIN_EMAILS = [
+  'admin',
+  'admin@local.host',
   'wayh1360@gmail.com',
   'zawyannaing.yanrx4@gmail.com',
 ];
+
+export const MOCK_ADMIN_USER: User = {
+  id: 'local-admin-001',
+  app_metadata: { provider: 'email' },
+  user_metadata: { full_name: 'System Admin', name: 'System Admin' },
+  aud: 'authenticated',
+  created_at: new Date().toISOString(),
+  email: 'wayh1360@gmail.com',
+  phone: '',
+  role: 'authenticated',
+  updated_at: new Date().toISOString()
+};
 
 /**
  * Get all configured admin emails (from env or defaults)
@@ -56,16 +70,34 @@ export interface AuthState {
 let cachedUser: User | null = null;
 let cachedSession: Session | null = null;
 
-// Initialize cached user from supabase session
-supabase.auth.getSession().then(({ data: { session } }) => {
-  cachedSession = session;
-  cachedUser = session?.user ?? null;
-});
+// Check localStorage for saved local admin session
+if (typeof window !== 'undefined') {
+  const savedLocalAdmin = localStorage.getItem('hek_local_admin');
+  if (savedLocalAdmin) {
+    try {
+      cachedUser = JSON.parse(savedLocalAdmin);
+    } catch (e) {
+      localStorage.removeItem('hek_local_admin');
+    }
+  }
+}
+
+// Initialize cached user from supabase session if not local admin
+if (!cachedUser) {
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    if (!cachedUser) {
+      cachedSession = session;
+      cachedUser = session?.user ?? null;
+    }
+  });
+}
 
 // Keep cache updated with onAuthStateChange
 supabase.auth.onAuthStateChange((_event, session) => {
-  cachedSession = session;
-  cachedUser = session?.user ?? null;
+  if (!localStorage.getItem('hek_local_admin')) {
+    cachedSession = session;
+    cachedUser = session?.user ?? null;
+  }
 });
 
 export function extractUserInfo(user: User | null): AuthUserInfo | null {
@@ -81,7 +113,7 @@ export function extractUserInfo(user: User | null): AuthUserInfo | null {
     undefined;
 
   const email = user.email || '';
-  const isAdmin = isEmailAdmin(email);
+  const isAdmin = isEmailAdmin(email) || user.id === 'local-admin-001';
 
   return {
     id: user.id,
@@ -105,17 +137,49 @@ export function isAuthenticated(): boolean {
   return !!cachedUser;
 }
 
+// Event listeners for local auth changes
+const authSubscribers = new Set<(user: User | null, info: AuthUserInfo | null) => void>();
+
+function notifySubscribers() {
+  const info = extractUserInfo(cachedUser);
+  authSubscribers.forEach(cb => cb(cachedUser, info));
+}
+
 /**
- * Sign in with email and password via Supabase Auth
+ * Sign in with email and password via Supabase Auth (or default admin: admin / admin#$234)
  */
 export async function signInWithPassword(email: string, password: string): Promise<{ error: string | null }> {
+  const trimmedInput = email.trim().toLowerCase();
+  
+  // 1. Check default local admin credentials (admin / admin#$234)
+  if (
+    (trimmedInput === 'admin' || trimmedInput === 'admin@local.host' || isEmailAdmin(trimmedInput)) &&
+    password === 'admin#$234'
+  ) {
+    const adminUser: User = {
+      ...MOCK_ADMIN_USER,
+      email: trimmedInput.includes('@') ? trimmedInput : 'wayh1360@gmail.com'
+    };
+    cachedUser = adminUser;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('hek_local_admin', JSON.stringify(adminUser));
+    }
+    notifySubscribers();
+    return { error: null };
+  }
+
+  // 2. Fallback to Supabase Auth
   try {
+    const emailToUse = trimmedInput === 'admin' ? 'wayh1360@gmail.com' : email.trim();
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      email: emailToUse,
       password,
     });
     if (error) {
       return { error: error.message };
+    }
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('hek_local_admin');
     }
     return { error: null };
   } catch (err: any) {
@@ -177,14 +241,21 @@ export async function signInWithGoogle(): Promise<{ error: string | null }> {
  */
 export async function signOutUser(): Promise<{ error: string | null }> {
   try {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('hek_local_admin');
+    }
     const { error } = await supabase.auth.signOut();
     cachedUser = null;
     cachedSession = null;
+    notifySubscribers();
     if (error) {
       return { error: error.message };
     }
     return { error: null };
   } catch (err: any) {
+    cachedUser = null;
+    cachedSession = null;
+    notifySubscribers();
     return { error: err?.message || 'Failed to sign out' };
   }
 }
@@ -195,23 +266,32 @@ export async function signOutUser(): Promise<{ error: string | null }> {
 export function subscribeAuth(
   callback: (user: User | null, info: AuthUserInfo | null) => void
 ): () => void {
+  authSubscribers.add(callback);
+
   // Fire immediately with cached state
   callback(cachedUser, extractUserInfo(cachedUser));
 
-  // Also query session to ensure fresh state
-  supabase.auth.getSession().then(({ data: { session } }) => {
-    cachedSession = session;
-    cachedUser = session?.user ?? null;
-    callback(cachedUser, extractUserInfo(cachedUser));
-  });
+  // Also query session to ensure fresh state if not local admin
+  if (!cachedUser || cachedUser.id !== 'local-admin-001') {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!cachedUser || cachedUser.id !== 'local-admin-001') {
+        cachedSession = session;
+        cachedUser = session?.user ?? null;
+        callback(cachedUser, extractUserInfo(cachedUser));
+      }
+    });
+  }
 
   const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-    cachedSession = session;
-    cachedUser = session?.user ?? null;
-    callback(cachedUser, extractUserInfo(cachedUser));
+    if (!localStorage.getItem('hek_local_admin')) {
+      cachedSession = session;
+      cachedUser = session?.user ?? null;
+      callback(cachedUser, extractUserInfo(cachedUser));
+    }
   });
 
   return () => {
+    authSubscribers.delete(callback);
     subscription.unsubscribe();
   };
 }
