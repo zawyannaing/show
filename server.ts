@@ -753,4 +753,9 @@ async function startServer() {
   tryListen(PORT);
 }
 
-startServer();
+export default app;
+
+if (!process.env.VERCEL) {
+  startServer();
+}
+
