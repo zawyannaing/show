@@ -292,16 +292,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               {/* Drawer Scrollable Content: All Buttons Kept Up Here */}
               <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-6">
 
-                {/* 0. Account Authentication & Admin Status */}
-                <div className="space-y-2">
-                  <div className="text-[11px] font-bold text-neutral-400 dark:text-neutral-500 comfort:text-[#8c7e6d] uppercase tracking-wider font-myanmar">
-                    {language === 'my' ? 'အကောင့်နှင့် စီမံခန့်ခွဲခွင့်' : 'Account & Administrator'}
-                  </div>
-                  <div className="p-3 bg-neutral-100 dark:bg-neutral-900 comfort:bg-[#f2e9d8] rounded-2xl border border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1] flex items-center justify-between">
-                    <LoginButton language={language} />
-                  </div>
-                </div>
-
                 {/* 1. Quick Action & Accessibility Bar (Font Size, Comfort, Emergency 192, Theme) */}
                 <div className="space-y-3">
                   <div className="text-[11px] font-bold text-neutral-400 dark:text-neutral-500 comfort:text-[#8c7e6d] uppercase tracking-wider font-myanmar">
