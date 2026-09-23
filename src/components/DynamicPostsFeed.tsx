@@ -55,8 +55,8 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
   const [confirmDeletePost, setConfirmDeletePost] = useState<Post | null>(null);
 
-  const fetchPosts = async () => {
-    setLoading(true);
+  const fetchPosts = async (isSilent = false) => {
+    if (!isSilent) setLoading(true);
     try {
       const { data, error } = await supabase
         .from('posts')
@@ -65,9 +65,13 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
 
       if (error) {
         console.warn('Supabase fetch error, using initial bulletins:', error.message);
-      } else if (data && data.length > 0) {
-        // Merge Supabase posts with default seed bulletins if needed, or use Supabase posts
-        setPosts(data);
+      } else if (data) {
+        // Merge Supabase posts (newest first) with default seed bulletins
+        const supabaseTitles = new Set(data.map(p => cleanPostTitle(p.title).toLowerCase()));
+        const filteredInitial = INITIAL_BULLETINS.filter(
+          b => !supabaseTitles.has(cleanPostTitle(b.title).toLowerCase())
+        );
+        setPosts([...data, ...filteredInitial]);
       } else {
         setPosts(INITIAL_BULLETINS);
       }
@@ -75,27 +79,34 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
       console.warn('Error querying posts:', err);
       setPosts(INITIAL_BULLETINS);
     } finally {
-      setLoading(false);
+      if (!isSilent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchPosts();
+    // Initial fetch
+    fetchPosts(false);
 
-    // Subscribe to real-time changes if available
+    // 1. Subscribe to Supabase WebSocket real-time changes
     const channel = supabase
       .channel('public:posts')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'posts' },
         () => {
-          fetchPosts();
+          fetchPosts(true);
         }
       )
       .subscribe();
 
+    // 2. Facebook-style auto-polling fallback every 8 seconds across all devices
+    const pollInterval = setInterval(() => {
+      fetchPosts(true);
+    }, 8000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(pollInterval);
     };
   }, []);
 
@@ -201,7 +212,7 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
         <div className="flex flex-wrap items-center gap-2.5 shrink-0 w-full sm:w-auto">
           <button
             type="button"
-            onClick={fetchPosts}
+            onClick={() => fetchPosts()}
             disabled={loading}
             className="h-10 px-4 rounded-xl bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#f2e9d8] hover:bg-neutral-200 dark:hover:bg-neutral-700 text-black dark:text-white comfort:text-[#231f1a] text-xs font-bold flex items-center justify-center gap-2 transition border border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1] cursor-pointer flex-1 sm:flex-initial"
             title="Refresh feed"
