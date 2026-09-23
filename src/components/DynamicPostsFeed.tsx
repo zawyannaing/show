@@ -29,7 +29,6 @@ import { supabase, Post } from '../lib/supabaseClient';
 import { EditPostModal } from './EditPostModal';
 import { GoogleAuthModal } from './GoogleAuthModal';
 import { useAuth } from '../hooks/useAuth';
-import { LoginButton } from './LoginButton';
 import { INITIAL_BULLETINS, getPostCategory, cleanPostTitle } from '../data/initialBulletins';
 
 interface DynamicPostsFeedProps {
@@ -199,9 +198,6 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
 
         {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-2.5 shrink-0 w-full sm:w-auto">
-          {/* Supabase Email/Password Auth Login & Profile Indicator */}
-          <LoginButton language={language} />
-
           <button
             type="button"
             onClick={fetchPosts}
