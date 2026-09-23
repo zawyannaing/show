@@ -202,10 +202,6 @@ export const GoogleAuthModal: React.FC<GoogleAuthModalProps> = ({
                       </span>
                     )}
                   </div>
-                  
-                  <span className="text-xs text-neutral-600 dark:text-neutral-400 truncate block mt-0.5 font-mono">
-                    {userEmail}
-                  </span>
 
                   <p className="mt-2 text-xs font-myanmar leading-relaxed text-neutral-600 dark:text-neutral-300">
                     {isAdmin ? (
@@ -324,16 +320,16 @@ export const GoogleAuthModal: React.FC<GoogleAuthModalProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 font-myanmar">
-                    {language === 'my' ? 'အီးမေးလ် (Email):' : 'Email Address:'}
+                    {language === 'my' ? 'သုံးစွဲသူအမည် (Username):' : 'Username:'}
                   </label>
                   <div className="relative">
-                    <Mail className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+                    <User className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400" />
                     <input
-                      type="email"
+                      type="text"
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="name@example.com"
+                      placeholder="Username"
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-neutral-50 dark:bg-neutral-800 comfort:bg-[#f2e9d8] border border-neutral-300 dark:border-neutral-700 text-xs text-black dark:text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500/50 transition font-mono"
                     />
                   </div>

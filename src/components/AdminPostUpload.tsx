@@ -282,8 +282,8 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
       setStatusMessage({
         type: 'error',
         text: language === 'my'
-          ? `ခွင့်ပြုချက်မရှိပါ: Admin Mail စာရင်း (${getAdminEmails().join(', ')}) တွင် ပါဝင်မှသာ ပို့စ်တင်ခွင့်ရှိပါသည်။`
-          : 'Unauthorized: Only verified admin emails from VITE_ADMIN_EMAILS can upload posts.'
+          ? 'ခွင့်ပြုချက်မရှိပါ: Admin အကောင့်ဖြင့် ဝင်ရောက်ထားမှသာ ပို့စ်တင်ခွင့်ရှိပါသည်။'
+          : 'Unauthorized: Admin login required to upload posts.'
       });
       return;
     }
@@ -468,23 +468,10 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
               {language === 'my' ? 'စီမံခန့်ခွဲသူ ခွင့်ပြုချက် လိုအပ်ပါသည်' : 'Admin Control Panel Restricted'}
             </h2>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 comfort:text-[#645a4e] mt-2 leading-relaxed font-myanmar">
-              {isAuthenticated ? (
-                language === 'my' 
-                  ? `လက်ရှိ ဝင်ရောက်ထားသော အကောင့် (${userEmail || currentUser?.email}) သည် Admin မဟုတ်ပါ။ ခွင့်ပြုထားသော Admin Mail ဖြင့် ဝင်ရောက်ပါရန်။`
-                  : `Signed in as ${userEmail || currentUser?.email} (Standard User). This profile does not have Admin access. Please sign in with an authorized Admin email.`
-              ) : (
-                language === 'my'
-                  ? 'ဤ စီမံခန့်ခွဲမှု ကဏ္ဍသို့ ဝင်ရောက်ရန် ခွင့်ပြုချက်ရရှိထားသော Admin Mail ဖြင့် ဝင်ရောက်ရန် လိုအပ်ပါသည်။'
-                  : 'To access clinical posting and section management controls, sign in with an authorized Admin email.'
-              )}
+              {language === 'my'
+                ? 'ဤ စီမံခန့်ခွဲမှု ကဏ္ဍသို့ ဝင်ရောက်ရန် Admin သုံးစွဲသူအမည် (Username) နှင့် စကားဝှက် (Password) ဖြင့် ဝင်ရောက်ပါ။'
+                : 'To access clinical posting and section management controls, sign in with your Admin credentials.'}
             </p>
-          </div>
-
-          <div className="p-3 bg-neutral-50 dark:bg-neutral-800/60 rounded-2xl text-[11px] text-neutral-500 dark:text-neutral-400 font-mono text-left space-y-1 border border-neutral-200 dark:border-neutral-700">
-            <div className="font-bold font-myanmar text-neutral-700 dark:text-neutral-300">
-              {language === 'my' ? 'ခွင့်ပြုထားသော Admin Email များ:' : 'Authorized Admin Emails:'}
-            </div>
-            <div>{getAdminEmails().join(', ')}</div>
           </div>
 
           {/* Admin Username & Password Login Form */}
@@ -505,7 +492,7 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
 
             <div>
               <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 font-myanmar">
-                {language === 'my' ? 'Admin သုံးစွဲသူအမည် (Username / Email):' : 'Admin Username or Email:'}
+                {language === 'my' ? 'Admin သုံးစွဲသူအမည် (Username):' : 'Admin Username:'}
               </label>
               <div className="relative">
                 <User className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400" />
@@ -514,7 +501,7 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
                   required
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
-                  placeholder="e.g. admin"
+                  placeholder="Username"
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-neutral-50 dark:bg-neutral-800 comfort:bg-[#f2e9d8] border border-neutral-300 dark:border-neutral-700 text-xs text-black dark:text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500/50 transition font-mono"
                 />
               </div>
@@ -608,9 +595,6 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
                       <span>User</span>
                     </span>
                   )}
-                </span>
-                <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-mono block leading-tight">
-                  {currentUser.email}
                 </span>
               </div>
               <button

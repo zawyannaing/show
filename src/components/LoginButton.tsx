@@ -174,11 +174,6 @@ export const LoginButton: React.FC<LoginButtonProps> = ({
               )
             )}
           </div>
-          {userEmail && (
-            <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-mono block leading-tight truncate">
-              {userEmail}
-            </span>
-          )}
         </div>
 
         <ChevronDown className={`w-3.5 h-3.5 text-neutral-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
