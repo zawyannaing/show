@@ -494,21 +494,6 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
               type="button"
               onClick={async () => {
                 setAuthLoading(true);
-                const { error } = await signInWithPassword('admin', 'admin#$234');
-                if (error) setAuthError(error);
-                setAuthLoading(false);
-              }}
-              disabled={authLoading}
-              className="w-full py-3 px-4 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition shadow-sm cursor-pointer font-myanmar disabled:opacity-50"
-            >
-              <Crown className="w-4 h-4" />
-              <span>{language === 'my' ? 'Default Admin (admin / admin#$234) ဖြင့် ဝင်မည်' : 'Sign in with Default Admin (admin / admin#$234)'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={async () => {
-                setAuthLoading(true);
                 const { error } = await signInWithGoogle();
                 if (error) setAuthError(error);
                 setAuthLoading(false);

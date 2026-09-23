@@ -275,30 +275,6 @@ export const GoogleAuthModal: React.FC<GoogleAuthModalProps> = ({
                 <span>{language === 'my' ? 'Google အကောင့်ဖြင့် ဝင်ရောက်မည်' : 'Continue with Google'}</span>
               </button>
 
-              {/* Default Admin Quick Credentials Card */}
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 dark:bg-amber-950/30 border border-amber-500/30 space-y-1.5 font-myanmar">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-extrabold text-xs text-amber-950 dark:text-amber-200 flex items-center gap-1">
-                    <Crown className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                    <span>{language === 'my' ? 'Default Admin အကောင့်ဖြင့် ဝင်ရောက်ရန်:' : 'Default Admin Login:'}</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEmail('admin');
-                      setPassword('admin#$234');
-                      setActiveTab('signin');
-                    }}
-                    className="px-2.5 py-1 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] transition cursor-pointer shadow-xs"
-                  >
-                    {language === 'my' ? 'အလိုအလျောက် ဖြည့်မည် (Auto Fill)' : 'Auto Fill'}
-                  </button>
-                </div>
-                <div className="text-[11px] text-amber-900 dark:text-amber-300 font-mono leading-tight">
-                  Username: <span className="font-bold underline">admin</span> | Password: <span className="font-bold underline">admin#$234</span>
-                </div>
-              </div>
-
               <div className="relative flex items-center justify-center my-2">
                 <div className="border-t border-neutral-200 dark:border-neutral-800 w-full"></div>
                 <span className="bg-white dark:bg-neutral-900 comfort:bg-[#faf6ee] px-3 text-[10px] font-bold text-neutral-400 uppercase tracking-wider font-myanmar absolute">
