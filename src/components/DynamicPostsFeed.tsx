@@ -23,7 +23,8 @@ import {
   LogOut,
   Crown,
   AlertCircle,
-  User
+  User,
+  X
 } from 'lucide-react';
 import { supabase, Post } from '../lib/supabaseClient';
 import { EditPostModal } from './EditPostModal';
@@ -553,8 +554,18 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
 
       {/* Post Detail Modal */}
       {selectedPost && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-neutral-900 comfort:bg-[#faf6ee] rounded-3xl max-w-2xl w-full border border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white dark:bg-neutral-900 comfort:bg-[#faf6ee] rounded-3xl max-w-2xl w-full border border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col relative">
+            {/* Top Right Corner Floating Close Button for Mobile & Desktop */}
+            <button
+              type="button"
+              onClick={() => setSelectedPost(null)}
+              className="absolute top-3 right-3 sm:top-4 sm:right-4 z-30 w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/70 hover:bg-black text-white flex items-center justify-center shadow-lg border border-white/20 backdrop-blur-md transition-transform cursor-pointer hover:scale-105 active:scale-95"
+              aria-label="Close reading view"
+              title={language === 'my' ? 'ပိတ်မည်' : 'Close'}
+            >
+              <X className="w-5 h-5" />
+            </button>
             {selectedPost.image_url && (
               <div className="w-full max-h-72 shrink-0 overflow-hidden bg-black relative">
                 <img
