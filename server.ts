@@ -528,7 +528,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const effectiveMessage = (message && typeof message === 'string') ? message : 'Please analyze this medicine or health image in detail.';
-    const effectiveOpenRouterKey = openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENROUTER_API_KEY;
+    const effectiveOpenRouterKey = openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
     const selectedModel = model || process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash';
 
     const hasMyanmarCharacters = /[\u1000-\u109F]/.test(effectiveMessage);

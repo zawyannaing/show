@@ -320,51 +320,43 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
           });
 
         if (uploadError) {
-          const isRls = uploadError.message?.toLowerCase().includes('violates row-level security') ||
-                        uploadError.message?.toLowerCase().includes('row-level security');
+          console.warn('Supabase Storage upload returned error; falling back to direct compressed Base64 image encoding so photo is always visible to all users:', uploadError.message);
+          setIsStorageRlsError(true);
           
-          if (isRls) {
-            console.warn('Supabase Storage RLS blocked file upload; falling back to direct compressed Base64 image encoding so post is not lost.');
-            setIsStorageRlsError(true);
-            
-            // Auto fallback: convert to compressed base64 data URL so the post uploads immediately!
-            publicImageUrl = await new Promise<string>((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                const img = new Image();
-                img.onload = () => {
-                  const canvas = document.createElement('canvas');
-                  // Max 1000px dimension for storage efficiency
-                  let width = img.width;
-                  let height = img.height;
-                  const maxDim = 1000;
-                  if (width > maxDim || height > maxDim) {
-                    if (width > height) {
-                      height = Math.round((height * maxDim) / width);
-                      width = maxDim;
-                    } else {
-                      width = Math.round((width * maxDim) / height);
-                      height = maxDim;
-                    }
-                  }
-                  canvas.width = width;
-                  canvas.height = height;
-                  const ctx = canvas.getContext('2d');
-                  if (ctx) {
-                    ctx.drawImage(img, 0, 0, width, height);
-                    resolve(canvas.toDataURL('image/jpeg', 0.75));
+          // Auto fallback: convert to compressed base64 data URL so the post image uploads and displays immediately!
+          publicImageUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const img = new Image();
+              img.onload = () => {
+                const canvas = document.createElement('canvas');
+                let width = img.width;
+                let height = img.height;
+                const maxDim = 1000;
+                if (width > maxDim || height > maxDim) {
+                  if (width > height) {
+                    height = Math.round((height * maxDim) / width);
+                    width = maxDim;
                   } else {
-                    resolve(reader.result as string);
+                    width = Math.round((width * maxDim) / height);
+                    height = maxDim;
                   }
-                };
-                img.onerror = () => resolve(reader.result as string);
-                img.src = reader.result as string;
+                }
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  ctx.drawImage(img, 0, 0, width, height);
+                  resolve(canvas.toDataURL('image/jpeg', 0.75));
+                } else {
+                  resolve(reader.result as string);
+                }
               };
-              reader.readAsDataURL(imageFile);
-            });
-          } else {
-            throw new Error(`Supabase Storage: ${uploadError.message}`);
-          }
+              img.onerror = () => resolve(reader.result as string);
+              img.src = reader.result as string;
+            };
+            reader.readAsDataURL(imageFile);
+          });
         } else {
           // 2. Retrieve public URL
           const { data: urlData } = supabase.storage
