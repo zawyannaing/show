@@ -12,6 +12,18 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
+// Enable CORS for Vercel & cross-origin requests
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-OpenRouter-Key, X-Admin-Key');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+    return;
+  }
+  next();
+});
+
 // Initialize Gemini lazily
 let geminiClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI | null {
@@ -104,7 +116,7 @@ async function generateWithGeminiResilient(
 }
 
 // Health check API
-app.get('/api/health', (req, res) => {
+app.get(['/api/health', '/health'], (req, res) => {
   res.json({
     status: 'ok',
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
@@ -115,17 +127,18 @@ app.get('/api/health', (req, res) => {
 });
 
 // AI Doctor Medicine Photo Identification endpoint
-app.post('/api/medicine/identify', async (req, res) => {
+app.post(['/api/medicine/identify', '/medicine/identify'], async (req, res) => {
   try {
-    const { image, language = 'my', additionalNotes, medicineHint, openRouterApiKey, model } = req.body;
+    const { image, language = 'my', additionalNotes, medicineHint, openRouterApiKey, model } = req.body || {};
 
     if (!image || typeof image !== 'string') {
       res.status(400).json({ error: 'Medicine image is required.' });
       return;
     }
 
-    const effectiveOpenRouterKey = openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENROUTER_API_KEY;
-    const selectedModel = model || process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash';
+    const rawOpenRouterKey = openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENROUTER_API_KEY;
+    const effectiveOpenRouterKey = typeof rawOpenRouterKey === 'string' ? rawOpenRouterKey.trim() : '';
+    const selectedModel = typeof model === 'string' ? model : (process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash');
 
     const systemPrompt = `You are an expert AI Doctor and Senior Pharmacist in Myanmar helping an elderly patient (senior citizen) and their caregiver understand a medicine from a photo.
 The patient or their family took a photo of medicine packaging, blister foil, tablet bottle, liquid syrup, or Myanmar traditional medicine packet.
@@ -504,10 +517,10 @@ Do not enclose in markdown blocks, return pure JSON.`;
 });
 
 // Clinical & Herbal AI Assistant endpoint
-app.post('/api/chat', async (req, res) => {
+app.post(['/api/chat', '/chat'], async (req, res) => {
   try {
     const rawForwarded = req.headers['x-forwarded-for'];
-    const clientIp = typeof rawForwarded === 'string' ? rawForwarded.split(',')[0].trim() : (req.socket.remoteAddress || '127.0.0.1');
+    const clientIp = typeof rawForwarded === 'string' ? rawForwarded.split(',')[0].trim() : (req.socket?.remoteAddress || '127.0.0.1');
     const isIpAdmin = req.headers['x-admin-key'] || req.headers['authorization'];
 
     if (!isIpAdmin) {
@@ -521,7 +534,7 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    const { message, image, language = 'en', openRouterApiKey, model } = req.body;
+    const { message, image, language = 'en', openRouterApiKey, model } = req.body || {};
 
     if ((!message || typeof message !== 'string') && !image) {
       res.status(400).json({ error: 'Message query or image is required.' });
@@ -529,8 +542,9 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const effectiveMessage = (message && typeof message === 'string') ? message : 'Please analyze this medicine or health image in detail.';
-    const effectiveOpenRouterKey = openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
-    const selectedModel = model || process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash';
+    const rawOpenRouterKey = openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
+    const effectiveOpenRouterKey = typeof rawOpenRouterKey === 'string' ? rawOpenRouterKey.trim() : '';
+    const selectedModel = typeof model === 'string' ? model : (process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash');
 
     const hasMyanmarCharacters = /[\u1000-\u109F]/.test(effectiveMessage);
     const shouldReplyInMyanmar = language === 'my' || hasMyanmarCharacters;
@@ -702,8 +716,8 @@ Your core mission is to help users understand their health concerns, provide acc
       reply = `Curcuma longa (နနွင်း / Turmeric):\n• Clinical Indications: Joint inflammation (osteoarthritis) relief and accelerated wound healing.\n• Bioavailability Tip: Combine turmeric with a pinch of black pepper (piperine) to increase curcumin systemic absorption by up to 2000%.\n• Caution: Discontinue before scheduled major surgical procedures.`;
       myanmarReply = `နနွင်း (Turmeric / Curcuma longa) အသုံးချနည်း:\n• ဆေးဖက်ဝင် အကျိုးအာနိသင်: နနွင်းတွင် ပါဝင်သော Curcumin ဓာတ်သည် အဆစ်အမြစ်ရောင်ရမ်းနာကို သက်သာစေပြီး ဒဏ်ရာအနာကျက်မှုကို မြန်ဆန်စေပါသည်။\n• စုပ်ယူမှုအားကောင်းစေရန်: နနွင်းမှုန့်ကို ငရုတ်ကောင်းစေ့ အနည်းငယ်နှင့် တွဲဖက်သုံးဆောင်ပါက ခန္ဓာကိုယ်မှ စုပ်ယူမှုကို အဆ ၂၀၀၀ ထိ ပိုမိုအားကောင်းစေပါသည်။\n• သတိပြုရန်: ခွဲစိတ်ကုသမှု မခံယူမီ ၂ ပတ်အတွင်း နနွင်းကို အလွန်အကျွံ သုံးစွဲခြင်းမှ ရှောင်ကြဉ်ပါ။`;
     } else {
-      reply = `Home Health Guidance:\nYou inquired about "${message}".\n• For verified herbal monographs, explore the Medicinal Plants Directory (Zingiber officinale, Azadirachta indica, Ocimum tenuiflorum, Curcuma longa).\n• For emergency situations, consult the First Aid Protocols or dial Ambulance 192 directly.\n• Consult accredited healthcare practitioners before starting new herbal regimens.`;
-      myanmarReply = `အိမ်တွင်းကုသရေး အကြံပေး လမ်းညွှန်:\nမေးမြန်းမှု: "${message}"\n• တိုင်းရင်းဆေးကျမ်းကဏ္ဍတွင် အသိအမှတ်ပြု ဆေးဖက်ဝင်အပင် ၁၂၀ ကျော်၏ ဆေးညွှန်း၊ သောက်သုံးပုံနှင့် သတိပြုရန်များကို ရှာဖွေဖတ်ရှုနိုင်ပါသည်။\n• အရေးပေါ် ရှေးဦးသူနာပြုစုနည်းများအတွက် ရှေးဦးသူနာပြုလမ်းညွှန်ကို ဖတ်ရှုပါ (သို့) လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုပါ။\n• တိုင်းရင်းဆေးကုထုံး မစတင်မီ အသိအမှတ်ပြု တိုင်းရင်းဆေးဆရာများနှင့် ပြသတိုင်ပင်ပါ။`;
+      reply = `Home Health Guidance:\nYou inquired about "${effectiveMessage}".\n• For verified herbal monographs, explore the Medicinal Plants Directory (Zingiber officinale, Azadirachta indica, Ocimum tenuiflorum, Curcuma longa).\n• For emergency situations, consult the First Aid Protocols or dial Ambulance 192 directly.\n• Consult accredited healthcare practitioners before starting new herbal regimens.`;
+      myanmarReply = `အိမ်တွင်းကုသရေး အကြံပေး လမ်းညွှန်:\nမေးမြန်းမှု: "${effectiveMessage}"\n• တိုင်းရင်းဆေးကျမ်းကဏ္ဍတွင် အသိအမှတ်ပြု ဆေးဖက်ဝင်အပင် ၁၂၀ ကျော်၏ ဆေးညွှန်း၊ သောက်သုံးပုံနှင့် သတိပြုရန်များကို ရှာဖွေဖတ်ရှုနိုင်ပါသည်။\n• အရေးပေါ် ရှေးဦးသူနာပြုစုနည်းများအတွက် ရှေးဦးသူနာပြုလမ်းညွှန်ကို ဖတ်ရှုပါ (သို့) လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုပါ။\n• တိုင်းရင်းဆေးကုထုံး မစတင်မီ အသိအမှတ်ပြု တိုင်းရင်းဆေးဆရာများနှင့် ပြသတိုင်ပင်ပါ။`;
     }
 
     const finalAnswer = shouldReplyInMyanmar ? (myanmarReply || reply) : reply;
@@ -714,9 +728,12 @@ Your core mission is to help users understand their health concerns, provide acc
       source: 'clinical-rules',
       language: shouldReplyInMyanmar ? 'my' : 'en'
     });
-  } catch (error: unknown) {
-    console.error('Chat error:', error);
-    res.status(500).json({ error: 'Failed to process healthcare query.' });
+  } catch (error: any) {
+    console.error('Chat error:', error?.stack || error);
+    res.status(500).json({ 
+      error: 'Failed to process healthcare query.',
+      details: error?.message || String(error)
+    });
   }
 });
 
