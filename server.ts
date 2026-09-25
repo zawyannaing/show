@@ -281,7 +281,7 @@ Do not enclose in markdown blocks, return pure JSON.`;
 
     // 3. Clinical Knowledge-Base Intelligent Fallback
     // Matches by hint, notes, or returns high-relevance senior medicine profiles
-    const notesLower = (additionalNotes || '' + ' ' + (medicineHint || '')).toLowerCase();
+    const notesLower = `${additionalNotes || ''} ${medicineHint || ''}`.toLowerCase();
 
     let fallbackData: {
       medicineName: string;
@@ -506,7 +506,8 @@ Do not enclose in markdown blocks, return pure JSON.`;
 // Clinical & Herbal AI Assistant endpoint
 app.post('/api/chat', async (req, res) => {
   try {
-    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
+    const rawForwarded = req.headers['x-forwarded-for'];
+    const clientIp = typeof rawForwarded === 'string' ? rawForwarded.split(',')[0].trim() : (req.socket.remoteAddress || '127.0.0.1');
     const isIpAdmin = req.headers['x-admin-key'] || req.headers['authorization'];
 
     if (!isIpAdmin) {
@@ -678,7 +679,7 @@ Your core mission is to help users understand their health concerns, provide acc
     }
 
     // 3. High quality clinical rule-based triage fallback
-    const lower = message.toLowerCase();
+    const lower = (effectiveMessage || '').toLowerCase();
     let reply = '';
     let myanmarReply = '';
 
