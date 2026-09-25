@@ -1326,6 +1326,43 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                             </div>
                           )}
 
+                          {/* Follow-up Question / Prompt Suggestion Box (ABOVE AI Answer) */}
+                          <div className="p-3 rounded-2xl bg-neutral-100/90 dark:bg-neutral-800/80 border border-neutral-200/80 dark:border-neutral-700/60 shadow-2xs space-y-2">
+                            <div className="flex items-center gap-1.5 text-xs font-bold text-neutral-800 dark:text-neutral-200 font-myanmar">
+                              <Sparkles className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                              <span>
+                                {chatLanguage === 'my'
+                                  ? 'ဆက်လက်မေးမြန်းနိုင်သော မေးခွန်းများ (Follow-up Suggestions)'
+                                  : 'Suggested Follow-up Questions'}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(msg.suggestions && msg.suggestions.length > 0 ? msg.suggestions : (
+                                chatLanguage === 'my' ? [
+                                  'ဘေးထွက်ဆိုးကျိုးများ ဘာတွေရှိသလဲ',
+                                  'မည်သည့် အစားအစာများနှင့် ရှောင်ရန်လိုသလဲ',
+                                  'အသက် ၆၀ ကျော် သက်ကြီးရွယ်အို ဆေးညွှန်း',
+                                  'တိုင်းရင်း ဆေးဖက်ဝင် အပင်များ ဆွေးနွေးရန်'
+                                ] : [
+                                  'What are the common side effects?',
+                                  'What foods or drugs should I avoid?',
+                                  'Dosage guidance for seniors over 60',
+                                  'Consult traditional herbal remedies'
+                                ]
+                              )).map((sug, sIdx) => (
+                                <button
+                                  key={sIdx}
+                                  onClick={() => handleSendMessage(sug)}
+                                  className="px-2.5 py-1 rounded-xl text-xs bg-white dark:bg-neutral-900 hover:bg-purple-50 dark:hover:bg-purple-950/40 text-neutral-800 dark:text-neutral-200 border border-neutral-200/80 dark:border-neutral-700/70 hover:border-purple-300 dark:hover:border-purple-700 transition-all font-myanmar cursor-pointer flex items-center gap-1"
+                                  type="button"
+                                >
+                                  <span className="text-purple-500 font-bold">•</span>
+                                  <span>{sug}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
                           {/* Embedded Medicine Analysis Card */}
                           {msg.medicineResult ? (
                             <MedicineAnalysisCard 
@@ -1389,22 +1426,6 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                               {msg.timestamp}
                             </span>
                           </div>
-
-                          {/* Suggested Follow-up chips */}
-                          {msg.suggestions && msg.suggestions.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 pt-1">
-                              {msg.suggestions.map((sug, sIdx) => (
-                                <button
-                                  key={sIdx}
-                                  onClick={() => handleSendMessage(sug)}
-                                  className="px-2.5 py-1 rounded-full text-xs bg-neutral-100 hover:bg-neutral-200/80 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 transition-colors font-myanmar cursor-pointer"
-                                  type="button"
-                                >
-                                  {sug}
-                                </button>
-                              ))}
-                            </div>
-                          )}
                         </div>
                       </div>
                     );
@@ -1598,13 +1619,6 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                     )}
                   </button>
                 </div>
-
-                {/* Disclaimer Caption */}
-                <p className="text-[10px] text-center text-neutral-400 dark:text-neutral-500 mt-2 font-myanmar">
-                  {chatLanguage === 'my'
-                    ? 'အိမ်တွင်းကုသမှုအကြံပေး သည် ကျန်းမာရေး အသိပညာပေး လက်ထောက်ဖြစ်ပြီး ဆရာဝန်၏ တိုက်ရိုက်ကုသမှုကို အစားမထိုးပါ။ အရေးပေါ်အခြေအနေတွင် ၁၉၂ သို့ ခေါ်ဆိုပါ။'
-                    : 'Home Treatment Advisor provides health reference information and does not replace professional medical diagnosis. Call Emergency 192 for urgent life safety.'}
-                </p>
               </div>
             </div>
           )}

@@ -209,6 +209,31 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
                   key={msg.id}
                   className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
                 >
+                  {!isUser && (
+                    <div className="mb-2 p-2.5 rounded-xl bg-purple-50/80 dark:bg-purple-950/30 border border-purple-200/60 dark:border-purple-800/40 space-y-1.5 max-w-[95%]">
+                      <div className="flex items-center gap-1 text-[11px] font-bold text-purple-900 dark:text-purple-300 font-myanmar">
+                        <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400 shrink-0" />
+                        <span>{chatLanguage === 'my' ? 'ဆက်လက်မေးရန် မေးခွန်းများ (Follow-up Suggestions)' : 'Suggested Follow-up Questions'}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {[
+                          chatLanguage === 'my' ? 'ဘေးထွက်ဆိုးကျိုးများ ဘာတွေရှိသလဲ' : 'What are side effects?',
+                          chatLanguage === 'my' ? 'မည်သည့် အစားအစာများနှင့် ရှောင်ရန်လိုသလဲ' : 'What foods to avoid?',
+                          chatLanguage === 'my' ? 'တိုင်းရင်း ဆေးဖက်ဝင် အပင်များ မေးရန်' : 'Herbal remedies guidance'
+                        ].map((sug, sIdx) => (
+                          <button
+                            key={sIdx}
+                            onClick={() => handleSendMessage(sug)}
+                            className="px-2 py-0.5 rounded-lg text-[10px] bg-white dark:bg-neutral-900 hover:bg-purple-100 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border border-purple-200/80 dark:border-neutral-700 transition-all font-myanmar cursor-pointer"
+                            type="button"
+                          >
+                            • {sug}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div
                     className={`p-3.5 rounded-2xl text-xs leading-relaxed max-w-[90%] shadow-sm ${
                       isUser
