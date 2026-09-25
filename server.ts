@@ -737,6 +737,117 @@ Your core mission is to help users understand their health concerns, provide acc
   }
 });
 
+// Helper function to process AI health queries for Telegram & Web
+async function processHealthAiQuery(userText: string, language: string = 'my'): Promise<string> {
+  const effectiveMessage = userText.trim() || 'Please provide health guidance.';
+  const effectiveOpenRouterKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
+  const selectedModel = process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash';
+
+  const hasMyanmarCharacters = /[\u1000-\u109F]/.test(effectiveMessage);
+  const shouldReplyInMyanmar = language === 'my' || hasMyanmarCharacters;
+
+  const systemInstruction = `You are "အိမ်တွင်းကုသရေး အကြံပေး" (Home Health & Wellness Advisor), an expert AI Health Agent in Myanmar.
+Language: ${shouldReplyInMyanmar ? 'Myanmar script (မြန်မာဘာသာ)' : 'English'}.
+Keep responses helpful, safe, clear, concise for Telegram chat. Do NOT use markdown asterisks (*, **). Use bullet points (•).`;
+
+  // 1. Try OpenRouter
+  if (effectiveOpenRouterKey) {
+    try {
+      const orResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${effectiveOpenRouterKey.trim()}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://tmhip-myanmar.app'),
+          'X-Title': 'TMHIP Myanmar Health Platform',
+        },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: effectiveMessage }
+          ],
+          temperature: 0.3,
+          max_tokens: 800,
+        }),
+      });
+
+      if (orResponse.ok) {
+        const data = await orResponse.json();
+        const content = data.choices?.[0]?.message?.content;
+        if (content) return cleanTextResponse(content);
+      }
+    } catch (err) {
+      console.warn('OpenRouter Telegram query error:', err);
+    }
+  }
+
+  // 2. Try Gemini
+  const ai = getGeminiClient();
+  if (ai) {
+    try {
+      const result = await generateWithGeminiResilient(ai, {
+        contents: effectiveMessage,
+        config: { systemInstruction, temperature: 0.3 }
+      });
+      if (result.text) return cleanTextResponse(result.text);
+    } catch (err) {
+      console.warn('Gemini Telegram query error:', err);
+    }
+  }
+
+  // 3. Fallback rule-based reply
+  const lower = effectiveMessage.toLowerCase();
+  if (lower.includes('burn') || lower.includes('မီးလောင်')) {
+    return `မီးလောင်ဒဏ်ရာ အရေးပေါ် ရှေးဦးပြုစုနည်း:\n၁။ ရေအေးဖြင့် အနည်းဆုံး မိနစ် ၂၀ ဆက်တိုက် လောင်းချပါ။ ရေခဲမကပ်ရ။\n၂။ သွားတိုက်ဆေး၊ ပဲငံပြာရည် လုံးဝမလိမ်းပါနှင့်။\n၃။ အဝတ်သန့် သို့မဟုတ် ပလတ်စတစ်စဖြင့် လျော့လျော့ အုပ်ထားပါ။\n၄။ ဒဏ်ရာကြီးပါက လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုပါ။`;
+  } else if (lower.includes('snake') || lower.includes('မြွေ')) {
+    return `မြွေကိုက်ခံရပါက အရေးပေါ် အသက်ကယ်နည်းလမ်းများ:\n၁။ လူနာကို မပြေးမလွှားခိုင်းဘဲ ငြိမ်သက်စွာထားပါ။ ခြေလက်ကို ကျောက်ပတ်တီးစည်းပါ။\n၂။ နှလုံးထက် နိမ့်သောနေရာတွင် ထားပါ။\n၃။ ကြိုးမချည်ရ၊ ဓားဖြင့်မခွဲရ၊ ပါးစပ်ဖြင့် မစုပ်ရပါ။\n၄။ ဆေးရုံအရေးပေါ် ၁၉၂ သို့ ချက်ချင်း ပို့ဆောင်ပါ။`;
+  }
+
+  return shouldReplyInMyanmar 
+    ? `အိမ်တွင်းကုသရေး အကြံပေးမှ ကြိုဆိုပါတယ်။\nမေးမြန်းမှု: "${effectiveMessage}"\nကျန်းမာရေး၊ ရှေးဦးသူနာပြုစုနည်းနှင့် တိုင်းရင်းဆေးဖက်ဝင် အပင်များအကြောင်း မေးမြန်းနိုင်ပါသည်။ အရေးပေါ် အခြေအနေများအတွက် လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုပါ။`
+    : `Home Health Advisor:\nYou asked: "${effectiveMessage}"\nFeel free to ask about symptoms, first aid, or herbal remedies. For emergencies dial Ambulance 192 directly.`;
+}
+
+// Telegram Bot Webhook endpoint
+app.post(['/api/telegram', '/telegram'], async (req, res) => {
+  try {
+    const { message } = req.body || {};
+    if (!message || !message.text) {
+      res.status(200).send('OK');
+      return;
+    }
+
+    const chatId = message.chat.id;
+    const userText = message.text;
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+
+    if (!botToken) {
+      console.warn('TELEGRAM_BOT_TOKEN is missing in environment variables');
+      res.status(200).send('OK');
+      return;
+    }
+
+    // Process AI Response
+    const aiReply = await processHealthAiQuery(userText);
+
+    // Send response back to Telegram User
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: aiReply,
+      })
+    });
+
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Telegram webhook error:', err);
+    res.status(200).send('OK');
+  }
+});
+
 // Vite / static file setup
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
