@@ -64,7 +64,10 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.warn('Supabase fetch error, using initial bulletins:', error.message);
+        if (!isSilent) {
+          console.warn('Supabase fetch error, using initial bulletins:', error.message);
+        }
+        setPosts((prev) => (prev.length > 0 ? prev : INITIAL_BULLETINS));
       } else if (data) {
         // Merge Supabase posts (newest first) with default seed bulletins
         const supabaseTitles = new Set(data.map(p => cleanPostTitle(p.title).toLowerCase()));
@@ -75,9 +78,11 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
       } else {
         setPosts(INITIAL_BULLETINS);
       }
-    } catch (err) {
-      console.warn('Error querying posts:', err);
-      setPosts(INITIAL_BULLETINS);
+    } catch (err: any) {
+      if (!isSilent) {
+        console.warn('Error querying posts:', err?.message || err);
+      }
+      setPosts((prev) => (prev.length > 0 ? prev : INITIAL_BULLETINS));
     } finally {
       if (!isSilent) setLoading(false);
     }

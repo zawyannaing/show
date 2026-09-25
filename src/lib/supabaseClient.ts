@@ -11,7 +11,30 @@ const supabaseAnonKey =
   (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SUPABASE_ANON_KEY) ||
   'sb_publishable_9HuDL813Pxf6--IR5Uyd9Q_qAh09p7R';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Resilient fetch wrapper to handle transient network errors (such as QUIC protocol drops)
+const resilientFetch: typeof fetch = async (input, init) => {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    // Retry fetch on network failure (Chrome auto-negotiates back to HTTP/2 TCP when QUIC drops)
+    try {
+      return await fetch(input, init);
+    } catch (secondError) {
+      throw secondError;
+    }
+  }
+};
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+  global: {
+    fetch: resilientFetch,
+  },
+});
 
 export interface Post {
   id: string;
@@ -20,3 +43,4 @@ export interface Post {
   image_url: string | null;
   created_at: string;
 }
+

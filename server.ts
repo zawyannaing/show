@@ -241,7 +241,7 @@ Do not enclose in markdown blocks, return pure JSON.`;
           headers: {
             'Authorization': `Bearer ${effectiveOpenRouterKey.trim()}`,
             'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://tmhip-myanmar.app',
+            'HTTP-Referer': process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://tmhip-myanmar.app'),
             'X-Title': 'TMHIP Myanmar Health Platform',
           },
           body: JSON.stringify({
@@ -589,7 +589,7 @@ Your core mission is to help users understand their health concerns, provide acc
             headers: {
               'Authorization': `Bearer ${effectiveOpenRouterKey.trim()}`,
               'Content-Type': 'application/json',
-              'HTTP-Referer': 'https://tmhip-myanmar.app',
+              'HTTP-Referer': process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://tmhip-myanmar.app'),
               'X-Title': 'TMHIP Myanmar Health Platform',
             },
             body: JSON.stringify({
