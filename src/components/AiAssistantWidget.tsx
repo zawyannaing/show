@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { ChatMessage } from '../types';
 import { cleanMarkdownText } from '../utils/cleanText';
+import { getTopicSuggestions } from '../utils/suggestionHelper';
 
 interface AiAssistantWidgetProps {
   isOpen: boolean;
@@ -201,8 +202,12 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
 
           {/* Messages Body */}
           <div className="p-3 sm:p-4 flex flex-col gap-3 h-[45vh] sm:h-80 max-h-[480px] overflow-y-auto bg-neutral-50 dark:bg-neutral-950">
-            {messages.map((msg) => {
+            {messages.map((msg, mIdx) => {
               const isUser = msg.sender === 'user';
+              const prevUserMsg = messages.slice(0, mIdx).reverse().find(m => m.sender === 'user');
+              const topicSuggestions = (msg.suggestions && msg.suggestions.length > 0)
+                ? msg.suggestions
+                : getTopicSuggestions(prevUserMsg?.text || '', msg.text || '', chatLanguage === 'my');
 
               return (
                 <div
@@ -213,14 +218,10 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
                     <div className="mb-2 p-2.5 rounded-xl bg-purple-50/80 dark:bg-purple-950/30 border border-purple-200/60 dark:border-purple-800/40 space-y-1.5 max-w-[95%]">
                       <div className="flex items-center gap-1 text-[11px] font-bold text-purple-900 dark:text-purple-300 font-myanmar">
                         <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400 shrink-0" />
-                        <span>{chatLanguage === 'my' ? 'ဆက်လက်မေးရန် မေးခွန်းများ (Follow-up Suggestions)' : 'Suggested Follow-up Questions'}</span>
+                        <span>{chatLanguage === 'my' ? 'မေးမြန်းနေသော အကြောင်းအရာနှင့် စပ်လျဉ်းသည့် မေးခွန်းများ' : 'Topic Relevant Suggestions'}</span>
                       </div>
                       <div className="flex flex-wrap gap-1">
-                        {[
-                          chatLanguage === 'my' ? 'ဘေးထွက်ဆိုးကျိုးများ ဘာတွေရှိသလဲ' : 'What are side effects?',
-                          chatLanguage === 'my' ? 'မည်သည့် အစားအစာများနှင့် ရှောင်ရန်လိုသလဲ' : 'What foods to avoid?',
-                          chatLanguage === 'my' ? 'တိုင်းရင်း ဆေးဖက်ဝင် အပင်များ မေးရန်' : 'Herbal remedies guidance'
-                        ].map((sug, sIdx) => (
+                        {topicSuggestions.map((sug, sIdx) => (
                           <button
                             key={sIdx}
                             onClick={() => handleSendMessage(sug)}

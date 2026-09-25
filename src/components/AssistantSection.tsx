@@ -34,6 +34,7 @@ import { MedicineAnalysisCard } from './MedicineAnalysisCard';
 import { DEFAULT_CONSULTATION_HISTORY } from '../data/consultationHistory';
 import { cleanMarkdownText } from '../utils/cleanText';
 import { useAuth } from '../hooks/useAuth';
+import { getTopicSuggestions } from '../utils/suggestionHelper';
 
 export interface StoredConsultation {
   id: string;
@@ -467,9 +468,7 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
               text: summaryText,
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               medicineResult: medData,
-              suggestions: isBurmese 
-                ? ['အစာနှင့် တွဲသောက်ရမလား?', 'ဘေးထွက်ဆိုးကျိုးများ ဘာတွေရှိလဲ?', 'အခြား သွေးတိုးကျဆေးများနှင့် တွဲသောက်နိုင်သလား?']
-                : ['Can I take this with food?', 'What are the common side effects?', 'Does it interact with other drugs?']
+              suggestions: getTopicSuggestions(medData.medicineName || medData.myanmarName || 'medicine', summaryText, isBurmese)
             };
           } else {
             throw new Error('Medicine identify returned error');
@@ -494,6 +493,7 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
             sender: 'assistant',
             text: chatData.response || (isBurmese ? 'ဆေးဝါးကို စစ်ဆေးပြီးပါပြီ။' : 'Medicine analyzed.'),
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            suggestions: getTopicSuggestions(queryText || 'medicine photo', chatData.response || '', isBurmese)
           };
         }
       } else {
@@ -529,15 +529,7 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
           text: data.response,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           isEmergencyAlert: isEmergency,
-          suggestions: isBurmese ? [
-            'အရေးပေါ် လူနာတင်ယာဉ် ၁၉၂ ခေါ်နည်း',
-            'သက်ကြီး သွေးတိုးကျဆေးနည်းများ',
-            'ဆီးချိုအတွက် ကြက်ဟင်းခါးသီး ပြင်ဆင်ပုံ'
-          ] : [
-            'How to call Emergency 192',
-            'Herbs for senior blood pressure',
-            'Bitter melon preparation for diabetes'
-          ]
+          suggestions: getTopicSuggestions(queryText, data.response || '', isBurmese)
         };
       }
 
@@ -592,6 +584,7 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
         sender: 'assistant',
         text: reply,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        suggestions: getTopicSuggestions(queryText, reply, isBurmese)
       };
 
       const fallbackList = [...newMessages, fallbackMsg];
