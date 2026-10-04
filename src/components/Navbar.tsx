@@ -210,9 +210,12 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           </div>
 
-          {/* Right: STRICTLY ONLY 2 BUTTONS (Language Button & Menu Bar Button) */}
+          {/* Right Header Actions: Login Button, Language Button & Menu Bar Button */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             
+            {/* Login / Auth Button */}
+            <LoginButton language={language} variant="compact" />
+
             {/* BUTTON 1: Language Button (EN / မြန်မာ) */}
             <button
               onClick={onToggleLanguage}

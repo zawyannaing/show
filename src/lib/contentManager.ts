@@ -22,8 +22,7 @@ export function getManagedHerbs(): Herb[] {
     if (!saved) return HERBS_DATA;
     const parsed = JSON.parse(saved);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      // Merge with default HERBS_DATA to guarantee all new bilingual fields are present
-      return parsed.map((item: Herb) => {
+      const merged = parsed.map((item: Herb) => {
         const defaultHerb = HERBS_DATA.find(h => h.id === item.id);
         if (!defaultHerb) return item;
         return {
@@ -42,6 +41,9 @@ export function getManagedHerbs(): Herb[] {
           contraindicationsMy: (item.contraindicationsMy && item.contraindicationsMy.length > 0) ? item.contraindicationsMy : defaultHerb.contraindicationsMy,
         };
       });
+      const existingIds = new Set(parsed.map((item: Herb) => item.id));
+      const newDefaults = HERBS_DATA.filter(h => !existingIds.has(h.id));
+      return [...merged, ...newDefaults];
     }
     return HERBS_DATA;
   } catch (e) {

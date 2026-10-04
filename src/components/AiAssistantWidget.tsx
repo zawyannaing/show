@@ -65,12 +65,20 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
     { label: 'ဒူးနာ၊ အရိုးအဆစ်ရောင်', query: 'ဒူးနာ၊ ခါးနာ၊ အဆစ်အမြစ်ရောင်ရမ်းခြင်း သက်သာစေမည့် တိုင်းရင်းဆေးနှင့် ကြပ်ထုပ်နည်း' },
     { label: 'မီးလောင်ဒဏ်ရာ ပြုစုနည်း', query: 'မီးလောင်ဒဏ်ရာ အရေးပေါ် ရှေးဦးပြုစုနည်း ရှင်းပြပါ' },
     { label: 'မြွေကိုက်ခံရပါက ရှေးဦးပြုစုနည်း', query: 'မြွေကိုက်ခံရပါက ချက်ချင်း လုပ်ဆောင်ရမည့် အသက်ကယ်နည်း' },
+    { label: 'နှာစီး၊ ချောင်းဆိုး အိမ်တွင်းဆေး', query: 'နှာစီးခြင်း၊ နှာပိတ်ခြင်းနှင့် အအေးမိ ချောင်းဆိုးခြင်း သက်သာစေမည့် အိမ်တွင်း ဆေးနည်းများ' },
+    { label: 'ယားယံ အရေပြား ရှားစောင်းလက်ပပ်', query: 'အရေပြား ယားယံခြင်းနှင့် အဖုအပိမ့်များ သက်သာစေမည့် ရှားစောင်းလက်ပပ်နှင့် တမာရွက် သုံးစွဲပုံ' },
+    { label: 'သွားကိုက် လေးညှင်းဆီ', query: 'သွားကိုက်ခြင်းနှင့် သွားဖုံးနာခြင်း သက်သာစေရန် လေးညှင်းဆီနှင့် ဆားနွေးရေ သုံးစွဲပုံ' },
+    { label: 'ခေါင်းကိုက် ဇာတ်ကြောတက်', query: 'ခေါင်းကိုက်ခြင်းနှင့် ဇာတ်ကြောတက်ခြင်း သက်သာစေမည့် ရေနွေးဝတ်နှင့် ချင်း ရေနွေးကြမ်း သောက်နည်း' },
   ] : [
     { label: 'Blood Pressure Herbal Care', query: 'Evidence-based herbs and garlic dosage for high blood pressure' },
     { label: 'Diabetes & Bitter Melon', query: 'How does bitter melon regulate blood sugar in diabetes?' },
     { label: 'Knee & Joint Arthritis', query: 'How to relieve knee osteoarthritis pain with turmeric and ginger poultice?' },
     { label: 'Burn First Aid steps', query: 'What are the first aid steps for severe burns?' },
     { label: 'Snakebite Protocol', query: 'What is the standardized emergency protocol for a snakebite?' },
+    { label: 'Cold & Cough Remedies', query: 'Home remedies for runny nose, nasal congestion, and persistent cough' },
+    { label: 'Skin Rash & Aloe Gel', query: 'Aloe vera and neem leaf remedies for skin itching and rashes' },
+    { label: 'Toothache & Clove Relief', query: 'How to use clove oil and warm saltwater rinse for quick toothache relief' },
+    { label: 'Headache & Neck Stiffness', query: 'Ginger tea and warm compress techniques for tension headache relief' },
   ];
 
   const handleSendMessage = async (textToSend?: string) => {

@@ -34,7 +34,7 @@ import { MedicineAnalysisCard } from './MedicineAnalysisCard';
 import { DEFAULT_CONSULTATION_HISTORY } from '../data/consultationHistory';
 import { cleanMarkdownText } from '../utils/cleanText';
 import { useAuth } from '../hooks/useAuth';
-import { getTopicSuggestions } from '../utils/suggestionHelper';
+import { getTopicSuggestions, CLIENT_PROMPT_SUGGESTIONS } from '../utils/suggestionHelper';
 
 export interface StoredConsultation {
   id: string;
@@ -1224,6 +1224,49 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                       </div>
                     </div>
 
+                  </div>
+
+                  {/* Client-Requested Prompt Suggestions Section */}
+                  <div className="mt-6 text-left space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 font-myanmar">
+                        {chatLanguage === 'my' ? 'လူသုံးအများဆုံး အကြံပြုမေးခွန်းများ (Prompt Suggestions)' : 'Client-Requested Prompt Suggestions'}
+                      </h3>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {CLIENT_PROMPT_SUGGESTIONS.map((cat) => (
+                        <div
+                          key={cat.id}
+                          className="p-3.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200/80 dark:border-neutral-800 shadow-2xs space-y-2 font-myanmar"
+                        >
+                          <div className="flex items-center justify-between pb-1.5 border-b border-neutral-100 dark:border-neutral-800">
+                            <span className="text-xs font-bold text-neutral-900 dark:text-neutral-100 flex items-center gap-1.5">
+                              <span>{cat.id === 'chronic-senior' ? '🩺' : cat.id === 'herbal-monographs' ? '🌿' : cat.id === 'emergency-firstaid' ? '🚨' : '🤒'}</span>
+                              <span>{chatLanguage === 'my' ? cat.categoryNameMy : cat.categoryNameEn}</span>
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {cat.prompts.map((p, pIdx) => {
+                              const label = chatLanguage === 'my' ? p.labelMy : p.labelEn;
+                              const query = chatLanguage === 'my' ? p.queryMy : p.queryEn;
+                              return (
+                                <button
+                                  key={pIdx}
+                                  onClick={() => handleSendMessage(query)}
+                                  className="text-left px-2.5 py-1 rounded-xl text-xs bg-neutral-50 dark:bg-neutral-800/80 hover:bg-purple-50 dark:hover:bg-purple-950/40 text-neutral-800 dark:text-neutral-200 border border-neutral-200/60 dark:border-neutral-700/60 hover:border-purple-300 dark:hover:border-purple-700 transition-colors font-medium cursor-pointer"
+                                  type="button"
+                                >
+                                  • {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Saved Consultations Chips (Mapped from history prop) */}
