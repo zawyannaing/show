@@ -13,6 +13,7 @@ import {
 import { ChatMessage } from '../types';
 import { cleanMarkdownText } from '../utils/cleanText';
 import { getTopicSuggestions } from '../utils/suggestionHelper';
+import { PromptGeneratorModal } from './PromptGeneratorModal';
 
 interface AiAssistantWidgetProps {
   isOpen: boolean;
@@ -30,6 +31,7 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [chatLanguage, setChatLanguage] = useState<'en' | 'my'>(language);
+  const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -320,6 +322,15 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
             }}
             className="p-3 bg-white dark:bg-neutral-900 border-t border-border-subtle dark:border-neutral-800 flex items-center gap-2"
           >
+            <button
+              type="button"
+              onClick={() => setIsPromptModalOpen(true)}
+              className="p-2 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition cursor-pointer shrink-0"
+              title={language === 'my' ? 'မေးခွန်း ပိုမိုပြည့်စုံအောင် AI ဖြင့် ပြင်မည်' : 'Enhance prompt with AI assistant'}
+            >
+              <Sparkles className="w-4 h-4" />
+            </button>
+
             <input
               className="flex-grow bg-neutral-100 dark:bg-neutral-800 px-4 py-2 rounded-full text-xs font-medium text-black dark:text-white placeholder-neutral-500 border-0 focus:ring-1 focus:ring-black dark:focus:ring-white focus:outline-none font-myanmar"
               placeholder={chatLanguage === 'my' ? 'ဆေးနည်း (သို့) ရှေးဦးပြုစုနည်း မေးပါ...' : 'Ask healthcare question...'}
@@ -337,6 +348,16 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
               <Send className="w-3.5 h-3.5" />
             </button>
           </form>
+
+          <PromptGeneratorModal
+            isOpen={isPromptModalOpen}
+            onClose={() => setIsPromptModalOpen(false)}
+            language={language}
+            initialText={input}
+            onSelectPrompt={(enhancedPrompt) => {
+              setInput(enhancedPrompt);
+            }}
+          />
         </div>
       )}
 

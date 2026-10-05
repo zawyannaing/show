@@ -35,6 +35,7 @@ import { DEFAULT_CONSULTATION_HISTORY } from '../data/consultationHistory';
 import { cleanMarkdownText } from '../utils/cleanText';
 import { useAuth } from '../hooks/useAuth';
 import { getTopicSuggestions, CLIENT_PROMPT_SUGGESTIONS } from '../utils/suggestionHelper';
+import { PromptGeneratorModal } from './PromptGeneratorModal';
 
 export interface StoredConsultation {
   id: string;
@@ -73,6 +74,7 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [attachedImageName, setAttachedImageName] = useState<string | null>(null);
   const [isCameraMenuOpen, setIsCameraMenuOpen] = useState(false);
+  const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
   
   // History Sidebar state & search (Collapsed by default so user sees search first)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -1616,6 +1618,16 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                     <Camera className="w-5 h-5" />
                   </button>
 
+                  {/* Prompt Generator / Enhancer Sparkles Button */}
+                  <button
+                    onClick={() => setIsPromptModalOpen(true)}
+                    className="p-2 sm:p-2.5 rounded-full text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-colors cursor-pointer shrink-0"
+                    title={language === 'my' ? 'မေးခွန်း ပိုမိုပြည့်စုံအောင် AI ဖြင့် ပြင်မည် (Prompt Assistant)' : 'Structure & enhance prompt with AI'}
+                    type="button"
+                  >
+                    <Sparkles className="w-5 h-5" />
+                  </button>
+
                   {/* Auto-expanding Input Field */}
                   <textarea
                     ref={textareaRef}
@@ -1685,6 +1697,16 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
           </div>
         </div>
       )}
+
+      <PromptGeneratorModal
+        isOpen={isPromptModalOpen}
+        onClose={() => setIsPromptModalOpen(false)}
+        language={language}
+        initialText={input}
+        onSelectPrompt={(enhancedPrompt) => {
+          setInput(enhancedPrompt);
+        }}
+      />
     </div>
   );
 };
