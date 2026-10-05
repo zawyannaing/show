@@ -224,27 +224,6 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
                   key={msg.id}
                   className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
                 >
-                  {!isUser && (
-                    <div className="mb-2 p-2.5 rounded-xl bg-purple-50/80 dark:bg-purple-950/30 border border-purple-200/60 dark:border-purple-800/40 space-y-1.5 max-w-[95%]">
-                      <div className="flex items-center gap-1 text-[11px] font-bold text-purple-900 dark:text-purple-300 font-myanmar">
-                        <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400 shrink-0" />
-                        <span>{chatLanguage === 'my' ? 'မေးမြန်းနေသော အကြောင်းအရာနှင့် စပ်လျဉ်းသည့် မေးခွန်းများ' : 'Topic Relevant Suggestions'}</span>
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {topicSuggestions.map((sug, sIdx) => (
-                          <button
-                            key={sIdx}
-                            onClick={() => handleSendMessage(sug)}
-                            className="px-2 py-0.5 rounded-lg text-[10px] bg-white dark:bg-neutral-900 hover:bg-purple-100 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border border-purple-200/80 dark:border-neutral-700 transition-all font-myanmar cursor-pointer"
-                            type="button"
-                          >
-                            • {sug}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   <div
                     className={`p-3.5 rounded-2xl text-xs leading-relaxed max-w-[90%] shadow-sm ${
                       isUser
@@ -262,9 +241,31 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
                     </p>
 
                     {!isUser && (
-                      <div className="mt-2 pt-1 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between text-[10px] text-neutral-400">
-                        <span>{msg.timestamp}</span>
-                      </div>
+                      <>
+                        {/* Follow-up Prompt Suggestions directly under AI response */}
+                        <div className="mt-3 pt-2 border-t border-neutral-100 dark:border-neutral-800 space-y-1.5 font-myanmar">
+                          <div className="flex items-center gap-1 text-[11px] font-bold text-emerald-800 dark:text-emerald-300">
+                            <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0 animate-pulse" />
+                            <span>{chatLanguage === 'my' ? 'ဆက်လက်မေးမြန်းနိုင်သော မေးခွန်းများ:' : 'Suggested Follow-up:'}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {topicSuggestions.map((sug, sIdx) => (
+                              <button
+                                key={sIdx}
+                                type="button"
+                                onClick={() => handleSendMessage(sug)}
+                                className="text-left px-2 py-1 rounded-lg bg-emerald-50/70 hover:bg-emerald-100/90 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 text-emerald-900 dark:text-emerald-200 border border-emerald-200/70 dark:border-emerald-800/60 text-[10px] font-medium transition-all cursor-pointer font-myanmar"
+                              >
+                                💡 {sug}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="mt-2 pt-1 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between text-[10px] text-neutral-400">
+                          <span>{msg.timestamp}</span>
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>

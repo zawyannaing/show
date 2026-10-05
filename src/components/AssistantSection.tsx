@@ -1464,6 +1464,31 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                               {msg.timestamp}
                             </span>
                           </div>
+
+                          {/* Follow-up Prompt Suggestions Block Directly Under AI Response */}
+                          {msg.sender === 'assistant' && (
+                            <div className="mt-3 pt-2.5 border-t border-neutral-200/80 dark:border-neutral-800 space-y-2 font-myanmar">
+                              <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                                <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 animate-pulse" />
+                                <span>{chatLanguage === 'my' ? 'ဆက်လက်မေးမြန်းနိုင်သော မေးခွန်းများ (Prompt Suggestions):' : 'Suggested Follow-up Questions:'}</span>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                {(msg.suggestions && msg.suggestions.length > 0
+                                  ? msg.suggestions
+                                  : getTopicSuggestions(msg.text, '', chatLanguage === 'my')
+                                ).map((sug, sIdx) => (
+                                  <button
+                                    key={sIdx}
+                                    type="button"
+                                    onClick={() => handleSendMessage(sug)}
+                                    className="text-left px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-emerald-50 hover:text-emerald-900 dark:bg-neutral-800/80 dark:hover:bg-emerald-950/60 dark:hover:text-emerald-200 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 text-xs font-semibold transition-all cursor-pointer font-myanmar hover:border-emerald-500/40"
+                                  >
+                                    💡 {sug}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
