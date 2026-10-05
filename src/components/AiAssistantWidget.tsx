@@ -161,11 +161,11 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
   };
 
   return (
-    <div className="fixed bottom-[4.75rem] right-4 lg:bottom-6 lg:right-6 z-50 flex flex-col items-end">
+    <div className="fixed bottom-[4.75rem] right-3 sm:right-4 xl:bottom-6 xl:right-6 z-50 flex flex-col items-end">
       {/* Chat Popover Window (Responsive Full-width Card on Mobile) */}
       {isOpen && (
         <div
-          className="fixed inset-x-3 bottom-[5.25rem] lg:static lg:inset-auto lg:w-96 lg:max-w-md bg-white dark:bg-neutral-900 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.35)] border border-border-subtle dark:border-neutral-800 flex flex-col overflow-hidden mb-2 transition-all animate-in fade-in slide-in-from-bottom-4 duration-200 z-50 max-h-[calc(100dvh-120px)]"
+          className="fixed inset-x-3 bottom-[5.25rem] xl:static xl:inset-auto xl:w-96 xl:max-w-md bg-white dark:bg-neutral-900 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.35)] border border-border-subtle dark:border-neutral-800 flex flex-col overflow-hidden mb-2 transition-all animate-in fade-in slide-in-from-bottom-4 duration-200 z-50 max-h-[calc(100dvh-120px)]"
           id="aiChatPopover"
         >
           {/* Header */}

@@ -229,7 +229,7 @@ export default function App() {
       />
 
       {/* Main Content Area: Renders according to active section (Switch Section Style) */}
-      <main className="w-full flex-1 pb-20 lg:pb-0">
+      <main className="w-full flex-1 pb-24 xl:pb-0">
         {/* VIEW 1: Home Section - Only Community Bulletins & Posts (Live Post and Daily Post) */}
         {(activeSection === 'overview' || activeSection === 'posts') && (
           <div className="animate-in fade-in duration-200">

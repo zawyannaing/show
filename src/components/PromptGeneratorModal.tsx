@@ -179,7 +179,7 @@ export const PromptGeneratorModal: React.FC<PromptGeneratorModalProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="grid grid-cols-4 gap-1 p-2 bg-neutral-100 dark:bg-neutral-800/80 comfort:bg-[#f2e9d8] border-b border-neutral-200 dark:border-neutral-800">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-2 bg-neutral-100 dark:bg-neutral-800/80 comfort:bg-[#f2e9d8] border-b border-neutral-200 dark:border-neutral-800">
           <button
             type="button"
             onClick={() => setActiveTab('symptom')}
