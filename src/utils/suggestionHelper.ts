@@ -7,15 +7,39 @@ export function getTopicSuggestions(
   responseText: string = '',
   isBurmese: boolean = true
 ): string[] {
-  const combined = `${queryText} ${responseText}`.toLowerCase();
+  const q = queryText.toLowerCase();
+  const r = responseText.toLowerCase();
 
-  // 1. Burn / Fire Injuries (မီးလောင်)
-  if (combined.includes('burn') || combined.includes('မီးလောင်')) {
+  // Helper matcher: prioritizes queryText match first, then responseText match
+  const match = (...keywords: string[]) => 
+    keywords.some((kw) => q.includes(kw)) || keywords.some((kw) => r.includes(kw));
+
+  // 1. Stomach Pain / Digestive / Abdominal / Indigestion / Gastritis (ဗိုက် / အစာအိမ် / ရင်ပြည့် / လေ / ဝမ်း)
+  if (
+    q.includes('ဗိုက်') || q.includes('အစာအိမ်') || q.includes('ရင်ပြည့်') || q.includes('လေအောင့်') || 
+    q.includes('လေထိုး') || q.includes('ဝမ်း') || q.includes('အန်') || q.includes('မအီမသာ') ||
+    match('stomach', 'digest', 'belly', 'abdomen', 'abdominal', 'nausea', 'cramp', 'gastric', 'reflux', 'diarrhea')
+  ) {
+    return isBurmese ? [
+      'ဗိုက်အောင့် ရင်ပြည့် သက်သာစေမည့် အိမ်တွင်း ဆေးနည်းများ',
+      'အစာအိမ် အက်ဆစ်တက်ခြင်း ရှောင်ရမည့် အစားအစာများ',
+      'လေထိုး လေအောင့်အတွက် ချင်းရေနွေးကြမ်း သောက်သုံးနည်း',
+      'ဗိုက်အောင့်ခြင်း ဆရာဝန် ပြသရမည့် စိုးရိမ်ရ လက္ခဏာများ'
+    ] : [
+      'Home remedies for stomach ache and indigestion',
+      'Foods to avoid during acid reflux & gastritis',
+      'Ginger tea preparation for bloating & gas relief',
+      'Red flag symptoms for severe stomach pain'
+    ];
+  }
+
+  // 2. Burn / Fire Injuries (မီးလောင်)
+  if (match('burn', 'မီးလောင်')) {
     return isBurmese ? [
       'မီးလောင်ဒဏ်ရာ ပိုးမဝင်အောင် စောင့်ရှောက်နည်း',
       'မီးလောင်ရာတွင် ရှောင်ရမည့် အလေ့အထများ',
       'အမာရွတ် သက်သာစေရန် သဘာဝ ကုသနည်း',
-      'မီးလောင်ဒဏ်ရာအတွက် ဆရာဝန် ပြသရမည့် အခြေအနေ'
+      'မီးလောင်ဒဏ်ရာ ဆရာဝန် ပြသရမည့် အခြေအနေ'
     ] : [
       'How to prevent burn wound infection',
       'Harmful habits to avoid for burns',
@@ -24,8 +48,8 @@ export function getTopicSuggestions(
     ];
   }
 
-  // 2. Snakebite (မြွေ)
-  if (combined.includes('snake') || combined.includes('မြွေ')) {
+  // 3. Snakebite (မြွေ)
+  if (match('snake', 'မြွေ')) {
     return isBurmese ? [
       'မြွေဆိပ်ဖြေဆေး (Antivenom) ရရှိနိုင်သော ဆေးရုံများ',
       'မြွေကိုက်ခံရပါက လုံးဝ မပြုလုပ်ရမည့်အရာများ',
@@ -39,8 +63,8 @@ export function getTopicSuggestions(
     ];
   }
 
-  // 3. High Blood Pressure / Hypertension (သွေးတိုး / သွေးပေါင်)
-  if (combined.includes('pressure') || combined.includes('hypertension') || combined.includes('သွေးတိုး') || combined.includes('သွေးပေါင်')) {
+  // 4. High Blood Pressure / Hypertension (သွေးတိုး / သွေးပေါင်)
+  if (match('pressure', 'hypertension', 'သွေးတိုး', 'သွေးပေါင်')) {
     return isBurmese ? [
       'သွေးပေါင်ချိန် ပုံမှန် မည်သို့ တိုင်းတာရမလဲ',
       'ဆား စားသုံးမှု လျှော့ချရန် အကြံပြုချက်',
@@ -54,8 +78,8 @@ export function getTopicSuggestions(
     ];
   }
 
-  // 4. Diabetes / Blood Sugar (ဆီးချို / သွေးချို)
-  if (combined.includes('diabet') || combined.includes('sugar') || combined.includes('ဆီးချို') || combined.includes('သွေးချို')) {
+  // 5. Diabetes / Blood Sugar (ဆီးချို / သွေးချို)
+  if (match('diabet', 'sugar', 'ဆီးချို', 'သွေးချို')) {
     return isBurmese ? [
       'ဆီးချိုမတက်စေရန် ရှောင်ရမည့် အစားအစာများ',
       'ကြက်ဟင်းခါးသီး ပြင်ဆင်ပုံနှင့် တိုင်းရင်းဆေးနည်း',
@@ -69,8 +93,8 @@ export function getTopicSuggestions(
     ];
   }
 
-  // 5. Cough / Cold / Respiratory (ချောင်းဆိုး / အအေးမိ / ဖျား / ရင်ကျပ် / နှာစီး)
-  if (combined.includes('cough') || combined.includes('fever') || combined.includes('cold') || combined.includes('ချောင်းဆိုး') || combined.includes('ဖျား') || combined.includes('ရင်ကျပ်') || combined.includes('ပင်စိမ်း') || combined.includes('နှာစီး')) {
+  // 6. Cough / Cold / Respiratory (ချောင်းဆိုး / အအေးမိ / ဖျား / ရင်ကျပ် / နှာစီး)
+  if (match('cough', 'fever', 'cold', 'ချောင်းဆိုး', 'ဖျား', 'ရင်ကျပ်', 'နှာစီး')) {
     return isBurmese ? [
       'ပင်စိမ်းရွက် ရေနွေးဖျော သောက်သုံးနည်း',
       'ချင်းပြုတ်ရည်ဖြင့် ချွဲသလိပ် သက်သာစေပုံ',
@@ -84,23 +108,8 @@ export function getTopicSuggestions(
     ];
   }
 
-  // 6. Digestive / Stomach / Nausea (အစာမကြေ / ရင်ပြည့် / လေအောင့် / ဝမ်းပျက် / ဗိုက်အောင့်)
-  if (combined.includes('stomach') || combined.includes('digest') || combined.includes('nausea') || combined.includes('အစာမကြေ') || combined.includes('ရင်ပြည့်') || combined.includes('လေအောင့်') || combined.includes('ဝမ်း') || combined.includes('ဗိုက်')) {
-    return isBurmese ? [
-      'ချင်းအစိုဖြင့် လေထိုးလေအောင့် သက်သာစေပုံ',
-      'အစာအိမ် အက်ဆစ်တက်ခြင်း ရှောင်ရန် အစားအစာများ',
-      'ဓာတ်ဆားရည် သောက်သုံးနည်း',
-      'တမာရွက် ဟင်းခါး သောက်သုံးနည်း'
-    ] : [
-      'Ginger for indigestion relief',
-      'Foods that trigger acid reflux',
-      'Oral rehydration solution dosage',
-      'Neem soup for internal heat'
-    ];
-  }
-
   // 7. Joint Pain / Turmeric (အဆစ် / ဒူး / အကိုက်အခဲ / နနွင်း / ခါးနာ)
-  if (combined.includes('joint') || combined.includes('pain') || combined.includes('turmeric') || combined.includes('အဆစ်') || combined.includes('ဒူး') || combined.includes('အကိုက်အခဲ') || combined.includes('နနွင်း') || combined.includes('ခါး')) {
+  if (match('joint', 'turmeric', 'အဆစ်', 'ဒူးနာ', 'အကိုက်အခဲ', 'ခါးနာ')) {
     return isBurmese ? [
       'နနွင်းနှင့် ငရုတ်ကောင်း တွဲဖက်သုံးဆောင်ပုံ',
       'သက်ကြီးရွယ်အို ဒူးဆစ်နာ သက်သာစေရန်',
@@ -115,7 +124,7 @@ export function getTopicSuggestions(
   }
 
   // 8. Skin Issues / Rashes (အရေပြား / ယားယံ / အဖုအပိမ့် / ရှားစောင်းလက်ပပ်)
-  if (combined.includes('skin') || combined.includes('rash') || combined.includes('itch') || combined.includes('အရေပြား') || combined.includes('ယားယံ') || combined.includes('အဖုအပိမ့်') || combined.includes('ရှားစောင်းလက်ပပ်')) {
+  if (match('skin', 'rash', 'itch', 'အရေပြား', 'ယားယံ', 'အဖုအပိမ့်', 'ရှားစောင်းလက်ပပ်')) {
     return isBurmese ? [
       'ရှားစောင်းလက်ပပ် ဂျယ်လ် လိမ်းပေးပုံ',
       'အရေပြား ယားယံခြင်းအတွက် တမာရွက် ရေချိုးနည်း',
@@ -130,7 +139,7 @@ export function getTopicSuggestions(
   }
 
   // 9. Toothache & Dental (သွားကိုက် / သွားဖုံး / လေးညှင်း)
-  if (combined.includes('tooth') || combined.includes('dental') || combined.includes('gum') || combined.includes('သွား') || combined.includes('လေးညှင်း')) {
+  if (match('tooth', 'dental', 'gum', 'သွားကိုက်', 'သွားဖုံး', 'လေးညှင်း')) {
     return isBurmese ? [
       'လေးညှင်းဆီဖြင့် သွားကိုက် သက်သာစေပုံ',
       'ဆားနွေးရေ ငုံပေးခြင်း၏ အကျိုးကျေးဇူး',
@@ -145,7 +154,7 @@ export function getTopicSuggestions(
   }
 
   // 10. Headache / Migraine (ခေါင်းကိုက် / ဇာတ်ကြော / နားထင်)
-  if (combined.includes('headache') || combined.includes('migraine') || combined.includes('ခေါင်းကိုက်') || combined.includes('ဇာတ်')) {
+  if (match('headache', 'migraine', 'ခေါင်းကိုက်', 'ဇာတ်ကြော')) {
     return isBurmese ? [
       'ချင်းရေနွေးကြမ်းဖြင့် ခေါင်းကိုက် သက်သာစေပုံ',
       'ဇာတ်ကြောတက် ခေါင်းကိုက်ခြင်း ရေနွေးဝတ် ကပ်နည်း',
@@ -159,8 +168,8 @@ export function getTopicSuggestions(
     ];
   }
 
-  // 11. Medicine / Photo Scan (ဆေး / ဆေးပြား / ဆေးဘူး)
-  if (combined.includes('medicine') || combined.includes('pill') || combined.includes('tablet') || combined.includes('ဆေး')) {
+  // 11. Specific Pill / Prescription Dose Query (ဆေးပြား / ဆေးဘူး / ဆေးသောက် / pill / tablet)
+  if (q.includes('ဆေးပြား') || q.includes('ဆေးဘူး') || q.includes('ဆေးသောက်') || q.includes('pill') || q.includes('tablet')) {
     return isBurmese ? [
       'ဤဆေး၏ ဘေးထွက်ဆိုးကျိုးများ ဘာတွေရှိသလဲ',
       'အစာမစားမီ (သို့) စားပြီးမှ သောက်ရမလား',
@@ -174,7 +183,7 @@ export function getTopicSuggestions(
     ];
   }
 
-  // 12. Extract Clean Medical Keyword (if present) after stripping question stop-words
+  // 12. Dynamic Keyword Extractor from Query
   const cleanKeyword = queryText
     .toLowerCase()
     .replace(/(ပါသလား|ရမလား|ဘာလုပ်ရမလဲ|ဘယ်လို|အကြောင်း|အိမ်တွင်း|ဆေးနည်း|ကျေးဇူးပြု၍|မေးချင်လို့|ခိုင်|ပါ|ရင်|အတွက်|အကြောင်း|what|how|to|do|i|please|tell|me|about|\?|\!|\.|\,)/g, '')

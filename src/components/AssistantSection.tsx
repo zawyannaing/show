@@ -1316,7 +1316,7 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                     </div>
                   )}
 
-                  {messages.map((msg) => {
+                  {messages.map((msg, mIdx) => {
                     const isUser = msg.sender === 'user';
 
                     if (isUser) {
@@ -1363,43 +1363,6 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                               </div>
                             </div>
                           )}
-
-                          {/* Follow-up Question / Prompt Suggestion Box (ABOVE AI Answer) */}
-                          <div className="p-3 rounded-2xl bg-neutral-100/90 dark:bg-neutral-800/80 border border-neutral-200/80 dark:border-neutral-700/60 shadow-2xs space-y-2">
-                            <div className="flex items-center gap-1.5 text-xs font-bold text-neutral-800 dark:text-neutral-200 font-myanmar">
-                              <Sparkles className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-                              <span>
-                                {chatLanguage === 'my'
-                                  ? 'ဆက်လက်မေးမြန်းနိုင်သော မေးခွန်းများ (Follow-up Suggestions)'
-                                  : 'Suggested Follow-up Questions'}
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {(msg.suggestions && msg.suggestions.length > 0 ? msg.suggestions : (
-                                chatLanguage === 'my' ? [
-                                  'ဘေးထွက်ဆိုးကျိုးများ ဘာတွေရှိသလဲ',
-                                  'မည်သည့် အစားအစာများနှင့် ရှောင်ရန်လိုသလဲ',
-                                  'အသက် ၆၀ ကျော် သက်ကြီးရွယ်အို ဆေးညွှန်း',
-                                  'တိုင်းရင်း ဆေးဖက်ဝင် အပင်များ ဆွေးနွေးရန်'
-                                ] : [
-                                  'What are the common side effects?',
-                                  'What foods or drugs should I avoid?',
-                                  'Dosage guidance for seniors over 60',
-                                  'Consult traditional herbal remedies'
-                                ]
-                              )).map((sug, sIdx) => (
-                                <button
-                                  key={sIdx}
-                                  onClick={() => handleSendMessage(sug)}
-                                  className="px-2.5 py-1 rounded-xl text-xs bg-white dark:bg-neutral-900 hover:bg-purple-50 dark:hover:bg-purple-950/40 text-neutral-800 dark:text-neutral-200 border border-neutral-200/80 dark:border-neutral-700/70 hover:border-purple-300 dark:hover:border-purple-700 transition-all font-myanmar cursor-pointer flex items-center gap-1"
-                                  type="button"
-                                >
-                                  <span className="text-purple-500 font-bold">•</span>
-                                  <span>{sug}</span>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
 
                           {/* Embedded Medicine Analysis Card */}
                           {msg.medicineResult ? (
@@ -1466,29 +1429,33 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                           </div>
 
                           {/* Follow-up Prompt Suggestions Block Directly Under AI Response */}
-                          {msg.sender === 'assistant' && (
-                            <div className="mt-3 pt-2.5 border-t border-neutral-200/80 dark:border-neutral-800 space-y-2 font-myanmar">
-                              <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 dark:text-emerald-300">
-                                <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 animate-pulse" />
-                                <span>{chatLanguage === 'my' ? 'ဆက်လက်မေးမြန်းနိုင်သော မေးခွန်းများ (Prompt Suggestions):' : 'Suggested Follow-up Questions:'}</span>
+                          {msg.sender === 'assistant' && (() => {
+                            const prevUserMsg = messages.slice(0, mIdx).reverse().find((m) => m.sender === 'user');
+                            const topicSuggestions = (msg.suggestions && msg.suggestions.length > 0)
+                              ? msg.suggestions
+                              : getTopicSuggestions(prevUserMsg?.text || '', msg.text, chatLanguage === 'my');
+
+                            return (
+                              <div className="mt-3 pt-2.5 border-t border-neutral-200/80 dark:border-neutral-800 space-y-2 font-myanmar">
+                                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                                  <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 animate-pulse" />
+                                  <span>{chatLanguage === 'my' ? 'ဆက်လက်မေးမြန်းနိုင်သော မေးခွန်းများ (Prompt Suggestions):' : 'Suggested Follow-up Questions:'}</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                  {topicSuggestions.map((sug, sIdx) => (
+                                    <button
+                                      key={sIdx}
+                                      type="button"
+                                      onClick={() => handleSendMessage(sug)}
+                                      className="text-left px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-emerald-50 hover:text-emerald-900 dark:bg-neutral-800/80 dark:hover:bg-emerald-950/60 dark:hover:text-emerald-200 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 text-xs font-semibold transition-all cursor-pointer font-myanmar hover:border-emerald-500/40"
+                                    >
+                                      💡 {sug}
+                                    </button>
+                                  ))}
+                                </div>
                               </div>
-                              <div className="flex flex-wrap gap-1.5 pt-0.5">
-                                {(msg.suggestions && msg.suggestions.length > 0
-                                  ? msg.suggestions
-                                  : getTopicSuggestions(msg.text, '', chatLanguage === 'my')
-                                ).map((sug, sIdx) => (
-                                  <button
-                                    key={sIdx}
-                                    type="button"
-                                    onClick={() => handleSendMessage(sug)}
-                                    className="text-left px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-emerald-50 hover:text-emerald-900 dark:bg-neutral-800/80 dark:hover:bg-emerald-950/60 dark:hover:text-emerald-200 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 text-xs font-semibold transition-all cursor-pointer font-myanmar hover:border-emerald-500/40"
-                                  >
-                                    💡 {sug}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                            );
+                          })()}
                         </div>
                       </div>
                     );
