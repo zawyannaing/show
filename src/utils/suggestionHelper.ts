@@ -174,19 +174,23 @@ export function getTopicSuggestions(
     ];
   }
 
-  // 12. Extract Clean Topic Word dynamically if specific term is present
-  const rawTopic = queryText.trim().replace(/[?!.,]/g, '');
-  if (rawTopic.length > 2 && rawTopic.length < 35) {
+  // 12. Extract Clean Medical Keyword (if present) after stripping question stop-words
+  const cleanKeyword = queryText
+    .toLowerCase()
+    .replace(/(ပါသလား|ရမလား|ဘာလုပ်ရမလဲ|ဘယ်လို|အကြောင်း|အိမ်တွင်း|ဆေးနည်း|ကျေးဇူးပြု၍|မေးချင်လို့|ခိုင်|ပါ|ရင်|အတွက်|အကြောင်း|what|how|to|do|i|please|tell|me|about|\?|\!|\.|\,)/g, '')
+    .trim();
+
+  if (cleanKeyword.length >= 2 && cleanKeyword.length <= 15) {
     return isBurmese ? [
-      `${rawTopic} ၏ ဘေးထွက်ဆိုးကျိုးများ`,
-      `${rawTopic} အတွက် ရှောင်ရမည့် အစားအစာများ`,
-      `${rawTopic} သက်သာစေရန် တိုင်းရင်းဆေးနည်းများ`,
-      `${rawTopic} အတွက် ဆရာဝန် ပြသရမည့် အခြေအနေ`
+      `${cleanKeyword} သက်သာစေရန် တိုင်းရင်းဆေးနည်းများ`,
+      `${cleanKeyword} အတွက် ရှောင်ရမည့် အစားအစာများ`,
+      `${cleanKeyword} ၏ ဘေးထွက်ဆိုးကျိုးနှင့် သတိပြုရန်အချက်များ`,
+      `${cleanKeyword} အတွက် ဆရာဝန် ပြသရမည့် အခြေအနေ`
     ] : [
-      `Side effects related to ${rawTopic}`,
-      `Foods to avoid for ${rawTopic}`,
-      `Herbal remedies for ${rawTopic}`,
-      `When to see a doctor for ${rawTopic}`
+      `Herbal remedies for ${cleanKeyword}`,
+      `Foods to avoid for ${cleanKeyword}`,
+      `Safety precautions regarding ${cleanKeyword}`,
+      `When to consult a doctor for ${cleanKeyword}`
     ];
   }
 
