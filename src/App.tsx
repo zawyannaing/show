@@ -213,7 +213,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-white dark:bg-black comfort:bg-[#faf6ee] text-black dark:text-white comfort:text-[#231f1a] antialiased selection:bg-black selection:text-white dark:selection:bg-white dark:selection:text-black transition-colors flex flex-col justify-between">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-white dark:bg-black comfort:bg-[#faf6ee] text-black dark:text-white comfort:text-[#231f1a] antialiased selection:bg-black selection:text-white dark:selection:bg-white dark:selection:text-black transition-colors flex flex-col justify-between">
       {/* Top Header Navbar with Switch Section Tabs & Accessibility Controls (A- to A++, Theme, Lang) */}
       <Navbar
         themeMode={themeMode}

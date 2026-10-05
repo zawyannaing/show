@@ -181,29 +181,29 @@ export const Navbar: React.FC<NavbarProps> = ({
     <>
       {/* Top Header: ONLY 2 BUTTONS ON RIGHT (Language Button & Menu Bar Button) */}
       <header className="sticky top-0 z-40 w-full bg-white/95 dark:bg-neutral-950/95 comfort:bg-[#faf6ee]/95 backdrop-blur-md border-b border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1] transition-colors">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+        <div className="max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
           
           {/* Left: Brand Identity (SHOW CARE MYANMAR) */}
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => {
                 onSelectSection('overview');
                 setMenuOpen(false);
               }}
-              className="flex items-center gap-2.5 text-left cursor-pointer group"
+              className="flex items-center gap-2 sm:gap-2.5 text-left cursor-pointer group min-w-0"
               id="tmhip-logo-btn"
               type="button"
             >
-              <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 group-hover:scale-105 transition-transform duration-200 shrink-0">
-                <Leaf className="w-5 h-5 text-white animate-pulse" />
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 group-hover:scale-105 transition-transform duration-200 shrink-0">
+                <Leaf className="w-4 h-4 sm:w-5 sm:h-5 text-white animate-pulse" />
               </div>
-              <div className="flex flex-col">
-                <div className="flex items-center gap-1.5">
-                  <span className="font-black text-base sm:text-lg tracking-tight leading-none bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 dark:from-emerald-400 dark:to-teal-300 bg-clip-text text-transparent animate-pulse">
+              <div className="flex flex-col min-w-0">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="font-black text-sm xs:text-base sm:text-lg tracking-tight leading-none bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 dark:from-emerald-400 dark:to-teal-300 bg-clip-text text-transparent animate-pulse truncate">
                     SHOW CARE MYANMAR
                   </span>
                 </div>
-                <span className="text-[10px] sm:text-[11px] text-emerald-800 dark:text-emerald-300 comfort:text-emerald-900 font-bold leading-tight font-myanmar hidden xs:block truncate">
+                <span className="text-[10px] sm:text-[11px] text-emerald-800 dark:text-emerald-300 comfort:text-emerald-900 font-bold leading-tight font-myanmar hidden md:block truncate">
                   {language === 'my' ? 'သဘာဝဆေးနှင့် ကျန်းမာရေး လမ်းညွှန်' : 'Health & Home Treatment Guide'}
                 </span>
               </div>
@@ -211,7 +211,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* Right Header Actions: Login Button, Language Button & Menu Bar Button */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
             
             {/* Login / Auth Button */}
             <LoginButton language={language} variant="compact" />
@@ -219,20 +219,20 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* BUTTON 1: Language Button (EN / မြန်မာ) */}
             <button
               onClick={onToggleLanguage}
-              className="h-10 px-3 sm:px-4 rounded-full bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#f2e9d8] hover:bg-neutral-200 dark:hover:bg-neutral-700 text-black dark:text-white comfort:text-[#231f1a] text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1] shadow-2xs"
+              className="h-9 sm:h-10 px-2.5 sm:px-4 rounded-full bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#f2e9d8] hover:bg-neutral-200 dark:hover:bg-neutral-700 text-black dark:text-white comfort:text-[#231f1a] text-xs font-bold flex items-center gap-1 sm:gap-1.5 transition-colors cursor-pointer border border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1] shadow-2xs"
               type="button"
               id="top-language-toggle-btn"
               title={language === 'en' ? 'Switch to Myanmar Unicode (မြန်မာဘာသာ)' : 'Switch to English'}
               aria-label="Toggle language: EN / MY"
             >
-              <Languages className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <Languages className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
               <span className="font-extrabold whitespace-nowrap">{language === 'en' ? 'EN' : 'မြန်မာ'}</span>
             </button>
 
             {/* BUTTON 2: Menu Bar Button (Menu / မီနူး) */}
             <button
               onClick={() => setMenuOpen((prev) => !prev)}
-              className={`h-10 px-3.5 sm:px-4 rounded-full flex items-center gap-2 cursor-pointer border transition-all text-xs font-bold shadow-2xs ${
+              className={`h-9 sm:h-10 px-2.5 sm:px-4 rounded-full flex items-center gap-1.5 sm:gap-2 cursor-pointer border transition-all text-xs font-bold shadow-2xs ${
                 menuOpen
                   ? 'bg-black text-white dark:bg-white dark:text-black comfort:bg-[#231f1a] comfort:text-[#faf6ee] border-transparent shadow-sm'
                   : 'bg-black text-white dark:bg-white dark:text-black comfort:bg-[#231f1a] comfort:text-[#faf6ee] hover:opacity-90 border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1]'
@@ -241,7 +241,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               id="top-menu-bar-btn"
               type="button"
             >
-              {menuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+              {menuOpen ? <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Menu className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
               <span className="font-myanmar font-bold whitespace-nowrap">
                 {language === 'my' ? 'မီနူး' : 'Menu'}
               </span>
