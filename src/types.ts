@@ -1,4 +1,4 @@
-export type ActiveSection = 'overview' | 'remedies' | 'plants' | 'symptoms' | 'hotlines' | 'assistant' | 'posts' | 'admin';
+export type ActiveSection = 'overview' | 'remedies' | 'plants' | 'symptoms' | 'hotlines' | 'assistant' | 'posts' | 'admin' | 'home_treatments';
 
 export type ThemeMode = 'light' | 'comfort' | 'dark';
 

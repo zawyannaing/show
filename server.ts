@@ -16,7 +16,7 @@ app.use(express.urlencoded({ limit: '25mb', extended: true }));
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-OpenRouter-Key, X-Admin-Key');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-OpenRouter-Key, X-Admin-Key, X-Gemini-Key, x-gemini-key, x-openrouter-key, x-admin-key');
   if (req.method === 'OPTIONS') {
     res.sendStatus(200);
     return;
@@ -24,28 +24,29 @@ app.use((req, res, next) => {
   next();
 });
 
-// Initialize Gemini lazily
-let geminiClient: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI | null {
-  if (!geminiClient && process.env.GEMINI_API_KEY) {
-    geminiClient = new GoogleGenAI({ 
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
+// Initialize Gemini lazily or with client key
+function getGeminiClient(keyOverride?: string): GoogleGenAI | null {
+  const effectiveKey = (keyOverride || process.env.GEMINI_API_KEY || '').trim();
+  if (!effectiveKey) return null;
+  return new GoogleGenAI({ 
+    apiKey: effectiveKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
       }
-    });
-  }
-  return geminiClient;
+    }
+  });
 }
 
 function cleanTextResponse(text: string): string {
   if (!text) return '';
-  return text
-    .replace(/\*{1,3}/g, '')
-    .replace(/(\n\s*)[•\-\*]\s+/g, '$1• ')
-    .trim();
+  let cleaned = text.trim();
+  if (cleaned.startsWith('```markdown')) {
+    cleaned = cleaned.replace(/^```markdown\s*/, '').replace(/\s*```$/, '');
+  } else if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```\w*\s*/, '').replace(/\s*```$/, '');
+  }
+  return cleaned.trim();
 }
 
 // In-memory sliding window rate limiter
@@ -69,50 +70,71 @@ function checkRateLimit(ip: string, maxRequests: number = 10, windowMs: number =
 }
 
 // Resilient Gemini model cascade: handles temporary 503 high-demand spikes
-const GEMINI_MODELS = [
-  'gemini-3.8-flash',
-  'gemini-flash-latest',
-  'gemini-3.1-flash-lite'
-];
-
-async function generateWithGeminiResilient(
-  ai: GoogleGenAI, 
-  requestPayload: { contents: any; config?: any }
+async function generateWithGeminiRest(
+  apiKey: string,
+  requestPayload: {
+    contents: any;
+    systemInstruction?: string;
+    temperature?: number;
+    responseMimeType?: string;
+  }
 ): Promise<{ text: string; modelUsed: string }> {
+  const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
   let lastError: any = null;
-  for (const model of GEMINI_MODELS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: requestPayload.contents,
-          config: requestPayload.config
-        });
-        const text = response.text || '';
-        return { text, modelUsed: model };
-      } catch (err: any) {
-        lastError = err;
-        const errMsg = err?.message || String(err);
-        const isUnavailableOrRateLimited = 
-          errMsg.includes('503') || 
-          errMsg.includes('high demand') || 
-          errMsg.includes('UNAVAILABLE') || 
-          errMsg.includes('429') ||
-          errMsg.includes('ResourceExhausted');
 
-        if (isUnavailableOrRateLimited) {
-          console.warn(`Gemini model ${model} (attempt ${attempt + 1}) busy or unavailable, trying retry/fallback...`);
-          if (attempt === 0) {
-            await new Promise((r) => setTimeout(r, 600));
-            continue;
-          }
+  for (const model of models) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const body: any = {
+        contents: requestPayload.contents,
+        generationConfig: {
+          temperature: requestPayload.temperature ?? 0.3,
+          ...(requestPayload.responseMimeType ? { responseMimeType: requestPayload.responseMimeType } : {})
         }
-        // If second attempt failed or not retryable, advance to next model
-        break;
+      };
+
+      if (requestPayload.systemInstruction) {
+        body.systemInstruction = {
+          parts: [{ text: requestPayload.systemInstruction }]
+        };
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(4000)
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.warn(`Gemini REST model ${model} HTTP ${response.status}:`, errText);
+        if (response.status === 400 || response.status === 403) {
+          throw new Error(`Gemini error: ${errText}`);
+        }
+        continue;
+      }
+
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      return { text, modelUsed: model };
+    } catch (err: any) {
+      lastError = err;
+      // Fast fail on network connection timeout or block to switch immediately to OpenRouter
+      if (
+        err?.name === 'TimeoutError' || 
+        err?.name === 'AbortError' ||
+        err?.code === 'UND_ERR_CONNECT_TIMEOUT' || 
+        err?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+        (typeof err?.message === 'string' && err.message.includes('fetch failed'))
+      ) {
+        console.warn(`Gemini connection timeout/blocked on ${model}. Fast-failing to OpenRouter fallback.`);
+        throw err;
       }
     }
   }
-  throw lastError;
+
+  throw lastError || new Error('All Gemini models failed');
 }
 
 // Health check API
@@ -129,12 +151,15 @@ app.get(['/api/health', '/health'], (req, res) => {
 // AI Doctor Medicine Photo Identification endpoint
 app.post(['/api/medicine/identify', '/medicine/identify'], async (req, res) => {
   try {
-    const { image, language = 'my', additionalNotes, medicineHint, openRouterApiKey, model } = req.body || {};
+    const { image, language = 'my', additionalNotes, medicineHint, openRouterApiKey, geminiApiKey, model } = req.body || {};
 
     if (!image || typeof image !== 'string') {
       res.status(400).json({ error: 'Medicine image is required.' });
       return;
     }
+
+    const rawGeminiKey = geminiApiKey || (req.headers['x-gemini-key'] as string) || process.env.GEMINI_API_KEY;
+    const effectiveGeminiKey = typeof rawGeminiKey === 'string' ? rawGeminiKey.trim() : '';
 
     const rawOpenRouterKey = openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENROUTER_API_KEY;
     const effectiveOpenRouterKey = typeof rawOpenRouterKey === 'string' ? rawOpenRouterKey.trim() : '';
@@ -189,9 +214,8 @@ Return ONLY a valid JSON object with these keys:
 }
 Do not enclose in markdown blocks, return pure JSON.`;
 
-    // 1. Try Gemini Vision if GEMINI_API_KEY is available
-    const ai = getGeminiClient();
-    if (ai) {
+    // 1. Try Gemini Vision if Gemini key is available
+    if (effectiveGeminiKey) {
       try {
         let mimeType = 'image/jpeg';
         let base64Data = image;
@@ -204,7 +228,7 @@ Do not enclose in markdown blocks, return pure JSON.`;
 
         const promptText = `Please analyze this medicine image.${additionalNotes ? ` Additional patient notes: "${additionalNotes}".` : ''}${medicineHint ? ` Suspected medicine: "${medicineHint}".` : ''}`;
 
-        const result = await generateWithGeminiResilient(ai, {
+        const result = await generateWithGeminiRest(effectiveGeminiKey, {
           contents: [
             {
               parts: [
@@ -220,10 +244,9 @@ Do not enclose in markdown blocks, return pure JSON.`;
               ]
             }
           ],
-          config: {
-            systemInstruction: systemPrompt,
-            responseMimeType: 'application/json'
-          }
+          systemInstruction: systemPrompt,
+          responseMimeType: 'application/json',
+          temperature: 0.2
         });
 
         const rawText = result.text;
@@ -246,19 +269,22 @@ Do not enclose in markdown blocks, return pure JSON.`;
     }
 
     // 2. Try OpenRouter multimodal if key is configured
-    if (effectiveOpenRouterKey) {
+    const serverOrKey = (process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+    let orKeyToUse = (effectiveOpenRouterKey || serverOrKey).trim();
+
+    if (orKeyToUse) {
       try {
         const promptText = `${systemPrompt}\n\nPatient additional notes: ${additionalNotes || 'None'}. Suspected: ${medicineHint || 'None'}`;
-        const orResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        let orResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${effectiveOpenRouterKey.trim()}`,
+            'Authorization': `Bearer ${orKeyToUse}`,
             'Content-Type': 'application/json',
             'HTTP-Referer': process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://tmhip-myanmar.app'),
             'X-Title': 'TMHIP Myanmar Health Platform',
           },
           body: JSON.stringify({
-            model: selectedModel,
+            model: selectedModel || 'google/gemini-2.5-flash',
             messages: [
               {
                 role: 'user',
@@ -271,7 +297,38 @@ Do not enclose in markdown blocks, return pure JSON.`;
             temperature: 0.2,
             response_format: { type: 'json_object' }
           }),
+          signal: AbortSignal.timeout(15000)
         });
+
+        // If client key failed (401/403), retry with server env key
+        if ((orResponse.status === 401 || orResponse.status === 403) && orKeyToUse !== serverOrKey && serverOrKey) {
+          console.warn('Medicine identify: Client OpenRouter key expired/failed. Retrying with server env key...');
+          orKeyToUse = serverOrKey;
+          orResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${orKeyToUse}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': process.env.APP_URL || 'https://tmhip-myanmar.app',
+              'X-Title': 'TMHIP Myanmar Health Platform',
+            },
+            body: JSON.stringify({
+              model: 'google/gemini-2.5-flash',
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: promptText },
+                    { type: 'image_url', image_url: { url: image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}` } }
+                  ]
+                }
+              ],
+              temperature: 0.2,
+              response_format: { type: 'json_object' }
+            }),
+            signal: AbortSignal.timeout(15000)
+          });
+        }
 
         if (orResponse.ok) {
           const data = await orResponse.json();
@@ -522,9 +579,10 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
     const rawForwarded = req.headers['x-forwarded-for'];
     const clientIp = typeof rawForwarded === 'string' ? rawForwarded.split(',')[0].trim() : (req.socket?.remoteAddress || '127.0.0.1');
     const isIpAdmin = req.headers['x-admin-key'] || req.headers['authorization'];
+    const isLocalhost = clientIp === '127.0.0.1' || clientIp === '::1' || clientIp === 'localhost' || clientIp.includes('127.0.0.1');
 
-    if (!isIpAdmin) {
-      const { allowed } = checkRateLimit(clientIp, 10, 10 * 60 * 1000); // 10 requests per 10 mins
+    if (!isIpAdmin && !isLocalhost) {
+      const { allowed } = checkRateLimit(clientIp, 30, 10 * 60 * 1000); // 30 requests per 10 mins
       if (!allowed) {
         res.status(429).json({
           response: 'ဆွေးနွေးမေးမြန်းနိုင်သည့် အကြိမ်အရေအတွက် ခေတ္တပြည့်သွားပါပြီ။ ကျေးဇူးပြု၍ မိနစ်အနည်းငယ် ကြာမှ ပြန်လည် မေးမြန်းပေးပါရန် (Rate Limit Exceeded. Please wait a few minutes before trying again.)',
@@ -534,7 +592,7 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
       }
     }
 
-    const { message, image, language = 'en', openRouterApiKey, model } = req.body || {};
+    const { message, image, language = 'en', openRouterApiKey, geminiApiKey, model } = req.body || {};
 
     if ((!message || typeof message !== 'string') && !image) {
       res.status(400).json({ error: 'Message query or image is required.' });
@@ -542,6 +600,9 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
     }
 
     const effectiveMessage = (message && typeof message === 'string') ? message : 'Please analyze this medicine or health image in detail.';
+    const rawGeminiKey = geminiApiKey || (req.headers['x-gemini-key'] as string) || process.env.GEMINI_API_KEY;
+    const effectiveGeminiKey = typeof rawGeminiKey === 'string' ? rawGeminiKey.trim() : '';
+
     const rawOpenRouterKey = openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
     const effectiveOpenRouterKey = typeof rawOpenRouterKey === 'string' ? rawOpenRouterKey.trim() : '';
     const selectedModel = typeof model === 'string' ? model : (process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash');
@@ -549,104 +610,103 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
     const hasMyanmarCharacters = /[\u1000-\u109F]/.test(effectiveMessage);
     const shouldReplyInMyanmar = language === 'my' || hasMyanmarCharacters;
 
-    const systemInstruction = `You are "အိမ်တွင်းကုသရေး အကြံပေး" (Home Health & Wellness Advisor), an expert, empathetic, and highly safety-conscious AI Health Agent embedded in the SHOW CARE MYANMAR platform.
+    const systemInstruction = shouldReplyInMyanmar ? `သင်သည် မြန်မာ့ရိုးရာ တိုင်းရင်းဆေးပညာ၊ အိမ်တွင်းကုထုံး (Home Remedies) နှင့် အခြေခံ ကျန်းမာရေးဆိုင်ရာ အသိပညာပေး လက်ထောက် AI Agent ဖြစ်သည်။
+သင့်၏ ရည်ရွယ်ချက်မှာ အသုံးပြုသူများ၏ မေးခွန်းများ၊ ရောဂါလက္ခဏာများကို စာနာနားလည်စွာ နားထောင်ပြီး လက်တွေ့ကျ၍ အန္တရာယ်ကင်းသော ကျန်းမာရေး လမ်းညွှန်ချက်များ၊ စောင့်ရန်/ရှောင်ရန်များနှင့် မြန်မာ့တိုင်းရင်းဆေး အကြံပြုချက်များကို စနစ်တကျ ဖြေကြားပေးရန် ဖြစ်သည်။
 
-# PRIMARY OBJECTIVE
-Your core mission is to help users understand their health concerns, provide accurate, evidence-based wellness and Myanmar traditional herbal guidance, and help them determine when to seek professional medical care.
+---
 
-# STRICT DIRECT RELEVANCE RULE (CRITICAL)
-- ANSWER ONLY WHAT IS ASKED: Directly answer ONLY the user's explicit question. Do NOT dump long generic medical lectures, unasked background topics, or unrelated diseases.
-- CONCISE & TARGETED: Focus strictly on providing practical, clear, step-by-step guidance, Myanmar traditional herbal remedies, dosage, and safety precautions specifically for their asked topic.
+# Operational Principles & Core Rules
+၁။ **Safety First (အန္တရာယ်ကင်းရှင်းရေး ဦးစားပေး):**
+   - အသုံးပြုသူက ပြင်းထန်သော အရေးပေါ်လက္ခဏာများ (ဥပမာ- ရင်ဘတ်အောင့်ခြင်း၊ အသက်ရှူကြပ်ခြင်း၊ ပြင်းထန်စွာသွေးထွက်ခြင်း၊ သတိလစ်ခြင်း၊ လေဖြတ်သည့်လက္ခဏာဖြစ်သော မျက်နှာရွဲ့ခြင်း/စကားမပီခြင်း) ပြသပါက မည်သည့်အိမ်တွင်းကုထုံးကိုမျှ အချိန်ဆွဲမညွှန်းဘဲ ဆေးရုံ/ဆေးခန်းသို့ ချက်ချင်းသွားရန် ဦးစွာ သတိပေးရမည် (လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုရန်)။
+   - ဘေးထွက်ဆိုးကျိုးများသော၊ အဆိပ်အတောက်ဖြစ်စေနိုင်သော၊ သို့မဟုတ် အတည်မပြုနိုင်သော ဆေးနည်းများကို လုံးဝမညွှန်းရ။
+   - ကိုယ်ဝန်ဆောင်၊ နို့တိုက်မိခင်နှင့် အသက် ၅ နှစ်အောက် ကလေးငယ်များအတွက် တိုင်းရင်းဆေးညွှန်းများကို အလွန်သတိထားရမည်ဖြစ်ပြီး ဆရာဝန်နှင့် တိုင်ပင်ရန် အမြဲတွဲဖက် အကြံပြုရမည်။
 
-# OPERATIONAL GUIDELINES & WORKFLOW
-1. Analyze Context: Review the conversation history and the user's latest message to maintain context and continuity.
-2. Clinical Triage: Assess user symptoms and categorize them into:
-   - Emergency: Requires immediate ER/ambulance (Instruct user to call emergency services like Ambulance 192 or Rescue 191 in Myanmar immediately).
-   - Doctor Visit: Requires professional medical examination.
-   - Home/Self-Care: Mild issues manageable at home with safe natural remedies or lifestyle measures.
+၂။ **Factual & Grounded Tone (တိကျခိုင်မာသော လေသံ):**
+   - အချက်အလက်ကို ပုံကြီးမချဲ့ရ၊ စိတ်ကူးယဉ် အဖြေများ (Hallucinations) မပေးရ။
+   - မြန်မာဘာသာစကားဖြင့် ရှင်းလင်း၊ ယဉ်ကျေးပြီး နားလည်လွယ်သော စကားပြေကို အသုံးပြုရမည်။
+   - ANSWER ONLY WHAT IS ASKED: အသုံးပြုသူ မေးမြန်းထားသော ရောဂါ/လက္ခဏာ သို့မဟုတ် အကြောင်းအရာ တစ်ခုတည်းကိုသာ တိုက်ရိုက် ဦးတည်ဖြေကြားပါ။ မမေးသော အခြားရောဂါများကို မဆိုင်ဘဲ ထည့်မရေးရ။
 
-# STRICT SAFETY RULES & BOUNDARIES
-- NO DIAGNOSIS: Never provide definitive medical diagnoses (e.g., avoid "You have bronchitis"). Use phrasing like "This pattern can sometimes be seen in..." or "Common possibilities include..." (in Burmese: "ဤလက္ခဏာများသည် ... တွင် တွေ့ရလေ့ရှိပါသည်").
-- NO PRESCRIPTIONS: Never prescribe specific prescription drugs or medication dosages.
-- EMERGENCY ESCALATION: If red-flag symptoms are present (e.g., severe chest pain, shortness of breath, sudden numbness, severe bleeding, snakebite, unconsciousness), immediately instruct the user to call emergency services (Ambulance 192 / Fire & Rescue 191).
-- STRICT SCOPE LOCK: You ONLY answer health, medical, wellness, nutrition, fitness, traditional herbal remedies, and first aid queries. If a user asks about non-health topics (e.g., programming, coding, math, general trivia, history), politely refuse using this exact message:
-  ${shouldReplyInMyanmar 
-    ? `"ကျွန်ုပ်သည် အိမ်တွင်းကုသရေး အကြံပေး ဖြစ်ပြီး သင်၏ ကျန်းမာရေးနှင့် သုခဆိုင်ရာ သီးသန့် ကူညီပေးသူ ဖြစ်ပါသည်။ ကျွန်ုပ်အနေဖြင့် ကျန်းမာရေးဆိုင်ရာ မေးမြန်းမှုများကိုသာ ကူညီ ဖြေကြားပေးနိုင်ပါသည်။ ယနေ့ သင်၏ ကျန်းမာရေးအတွက် မည်သို့ ကူညီပေးရမလဲ ခင်ဗျာ။"` 
-    : `"I am your Home Health Advisor. I can only assist with health-related queries. How can I help you with your health today?"`}
+၃။ **Strict Output Structure (ပုံစံတကျ ထုတ်ပြန်ခြင်း):**
+   အသုံးပြုသူက ကျန်းမာရေး အခြေအနေ သို့မဟုတ် ရောဂါလက္ခဏာတစ်ခုခုကို မေးမြန်းလာပါက မဖြစ်မနေ အောက်ပါ **Markdown Output Format** အတိုင်းသာ အပြည့်အစုံ ဖြေကြားရမည်။
 
-# OUTPUT FORMATTING
-- Tone: Direct, empathetic, professional, and clear.
-- Language: ${shouldReplyInMyanmar ? 'You MUST write your entire response fluently and completely in BURMESE script (မြန်မာဘာသာ).' : 'Write your response in clear, professional English.'}
-- Formatting Rule: DO NOT use markdown asterisks (*, **, ***) anywhere in your response. Use plain text and bullet points (•) for list items.
-- Structure:
-  - Brief direct acknowledgment of their question.
-  - Bullet points (•) for practical advice, traditional herbal remedies, or steps ONLY for the asked question.
-  - Short medical disclaimer.`;
+---
 
-    // 1. Try OpenRouter if key is available
-    if (effectiveOpenRouterKey) {
-      const openRouterModels = [
-        selectedModel,
-        'google/gemini-2.5-flash',
-        'meta-llama/llama-3.3-70b-instruct',
-        'openai/gpt-4o-mini',
-        'openrouter/auto'
-      ];
-      const uniqueModels = Array.from(new Set(openRouterModels.filter(Boolean)));
+# Response Structure Template
 
-      for (const modelToTry of uniqueModels) {
-        try {
-          const userContent: any = image ? [
-            { type: 'text', text: effectiveMessage },
-            { type: 'image_url', image_url: { url: image } }
-          ] : effectiveMessage;
+### 🌿 [ရောဂါလက္ခဏာ သို့မဟုတ် အကြောင်းအရာ အမည်]
+**အကျဉ်းချုပ် ရှင်းလင်းချက်:**
+[ဖြစ်ပွားရသည့် အကြောင်းရင်းနှင့် အခြေအနေကို နားလည်လွယ်သော စကားပြေဖြင့် ၂ ကြောင်းမှ ၃ ကြောင်းအတွင်း ရှင်းပြရန်]
 
-          const orResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${effectiveOpenRouterKey.trim()}`,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://tmhip-myanmar.app'),
-              'X-Title': 'TMHIP Myanmar Health Platform',
-            },
-            body: JSON.stringify({
-              model: modelToTry,
-              messages: [
-                { role: 'system', content: systemInstruction },
-                { role: 'user', content: userContent }
-              ],
-              temperature: 0.3,
-              max_tokens: 1024,
-            }),
-          });
+---
 
-          if (orResponse.ok) {
-            const data = await orResponse.json();
-            const content = data.choices?.[0]?.message?.content;
-            if (content) {
-              res.json({
-                response: cleanTextResponse(content),
-                source: 'openrouter',
-                model: modelToTry,
-                language: shouldReplyInMyanmar ? 'my' : 'en'
-              });
-              return;
-            }
-          } else {
-            const errText = await orResponse.text();
-            console.warn(`OpenRouter model ${modelToTry} status ${orResponse.status}:`, errText);
-          }
-        } catch (orErr) {
-          console.warn(`OpenRouter request for ${modelToTry} failed:`, orErr);
-        }
-      }
-    }
+#### ✅ စောင့်ထိန်း လိုက်နာရန်များ (Dos)
+* **[အချက် ၁]**: [နေထိုင်စားသောက်မှု၊ အနားယူမှု သို့မဟုတ် ရေဓာတ်ဖြည့်တင်းမှုဆိုင်ရာ အကြံပြုချက်]
+* **[အချက် ၂]**: [ရောဂါသက်သာစေမည့် လက်တွေ့ကျသော အလေ့အကျင့်]
+* **[အချက် ၃]**: [အထောက်အကူပြု အစားအသောက်/အာဟာရ]
 
-    // 2. If Gemini API Key is configured, use Gemini
-    const ai = getGeminiClient();
-    if (ai) {
+#### ❌ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)
+* **[အချက် ၁]**: [ရောဂါကို ပိုမိုဆိုးရွားစေနိုင်သော အစားအစာများ (ဥပမာ- အစပ်၊ အဆီ၊ အချဉ်၊ အငန်လွန်ကဲမှု)]
+* **[အချက် ၂]**: [ရှောင်ကြဉ်ရမည့် လူနေမှုပုံစံ သို့မဟုတ် အပြုအမူများ (ဥပမာ- ရေချိုးမှားခြင်း၊ အိပ်ရေးပျက်ခြင်း)]
+* **[အချက် ၃]**: [လွဲမှားသော အယူအဆ သို့မဟုတ် မလုပ်သင့်သည့် အပြုအမူ]
+
+#### 🍵 အထောက်အကူပြု မြန်မာ့တိုင်းရင်းဆေး / အိမ်တွင်းကုထုံး (Remedies)
+*(အန္တရာယ်ကင်းပြီး အိမ်တွင် အလွယ်တကူရနိုင်သော သဘာဝဆေးနည်း ၁ မျိုးမှ ၂ မျိုးသာ ညွှန်းပါ)*
+* **[ဆေးပင်/ပစ္စည်းအမည်]**: [တိကျသော ပြင်ဆင်ပုံနှင့် သောက်သုံး/အသုံးပြုနည်း အချိုးအစား]
+
+---
+
+> ⚠️ **အရေးပေါ် သတိပေးချက် (Red Flags):**
+> [ဘယ်လိုလက္ခဏာတွေ ထပ်မံပြသလာပါက သို့မဟုတ် ရက်မည်မျှကြာသည်အထိ မသက်သာပါက ဆရာဝန်/ဆေးရုံသို့ အမြန်ဆုံး သွားရောက်ပြသသင့်ကြောင်း သတိပေးချက်]
+>
+> 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*
+
+---
+# SCOPE LOCK
+အသုံးပြုသူက ကျန်းမာရေးနှင့် မသက်ဆိုင်သော အကြောင်းအရာများ (ဥပမာ- ကွန်ပျူတာ ပရိုဂရမ်မင်း၊ သင်္ချာ၊ အထွေထွေ ဗဟုသုတ) မေးမြန်းလာပါက ယဉ်ကျေးစွာဖြင့် အောက်ပါစာသားအတိုင်းသာ ဖြေကြားပါ:
+"ကျွန်ုပ်သည် မြန်မာ့ရိုးရာ တိုင်းရင်းဆေးပညာ၊ အိမ်တွင်းကုထုံးနှင့် အခြေခံ ကျန်းမာရေးဆိုင်ရာ လက်ထောက် ဖြစ်ပြီး ကျန်းမာရေးဆိုင်ရာ မေးမြန်းမှုများကိုသာ ကူညီ ဖြေကြားပေးနိုင်ပါသည်။ ယနေ့ သင်၏ ကျန်းမာရေးအတွက် မည်သို့ ကူညီပေးရမလဲ ခင်ဗျာ။"` 
+    : `You are an AI Health Agent specializing in Myanmar Traditional Medicine, Home Remedies, and Primary Health Education.
+Your purpose is to empathetically listen to user concerns and provide grounded, safe, step-by-step health guidelines, dos/don'ts, and natural remedy recommendations.
+
+# Operational Principles & Core Rules
+1. Safety First: If the user displays emergency symptoms (chest pain, shortness of breath, severe bleeding, loss of consciousness, stroke signs), immediately advise them to go to a hospital or call Ambulance 192 without delaying for home remedies. Never recommend toxic or unverified remedies. Exercise extreme care for pregnant/nursing mothers and children under 5.
+2. Factual & Grounded Tone: No hallucinations or exaggerations. Directly answer ONLY what is explicitly asked.
+3. Strict Output Structure: You MUST follow this Markdown template:
+
+### 🌿 [Symptom or Topic Name]
+**Summary Explanation:**
+[Brief 2-3 sentence explanation of causes and condition in clear terms]
+
+---
+
+#### ✅ Recommended Practices (Dos)
+* **[Point 1]**: [Lifestyle, rest, or hydration advice]
+* **[Point 2]**: [Practical habit to ease condition]
+* **[Point 3]**: [Helpful nutrition]
+
+#### ❌ Things to Avoid (Don'ts)
+* **[Point 1]**: [Foods that worsen symptoms (spicy, oily, sour, salty)]
+* **[Point 2]**: [Harmful habits or behaviors]
+* **[Point 3]**: [Common misconceptions]
+
+#### 🍵 Supportive Home / Traditional Remedies
+*(Recommend 1 to 2 safe, easily available natural remedies)*
+* **[Herb / Remedy Name]**: [Exact preparation and dosage instructions]
+
+---
+
+> ⚠️ **Emergency Warning (Red Flags):**
+> [Red flags or timeframe after which doctor/hospital visit is urgently needed]
+>
+> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or treatment.*
+
+# SCOPE LOCK
+If the user asks about non-health topics, politely reply:
+"I am your Myanmar Traditional Medicine and Home Health Assistant. I can only assist with health-related queries. How can I help you with your health today?"`;
+
+    // 1. Try Gemini first if key is available
+    if (effectiveGeminiKey) {
       try {
-        let contentsPayload: any = effectiveMessage;
+        let contentsPayload: any[];
         if (image && typeof image === 'string') {
           let mimeType = 'image/jpeg';
           let base64Data = image;
@@ -671,14 +731,18 @@ Your core mission is to help users understand their health concerns, provide acc
               ]
             }
           ];
+        } else {
+          contentsPayload = [
+            {
+              parts: [{ text: effectiveMessage }]
+            }
+          ];
         }
 
-        const result = await generateWithGeminiResilient(ai, {
+        const result = await generateWithGeminiRest(effectiveGeminiKey, {
           contents: contentsPayload,
-          config: {
-            systemInstruction,
-            temperature: 0.3,
-          }
+          systemInstruction,
+          temperature: 0.3,
         });
 
         const responseText = result.text || 'No response generated.';
@@ -690,7 +754,94 @@ Your core mission is to help users understand their health concerns, provide acc
         });
         return;
       } catch (geminiErr) {
-        console.warn('Gemini API call failed, using rule-based fallback:', geminiErr);
+        console.warn('Gemini API call failed, trying OpenRouter fallback:', geminiErr);
+      }
+    }
+
+    // 2. Try OpenRouter if key is available
+    const serverOpenRouterKey = (process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+    let keyToUse = (effectiveOpenRouterKey || serverOpenRouterKey).trim();
+
+    if (keyToUse) {
+      const openRouterModels = [
+        'google/gemini-2.5-flash',
+        selectedModel && selectedModel !== 'google/gemini-2.5-flash' ? selectedModel : null,
+        'meta-llama/llama-3.3-70b-instruct',
+        'openai/gpt-4o-mini',
+        'openrouter/auto'
+      ].filter(Boolean) as string[];
+
+      for (const modelToTry of openRouterModels) {
+        try {
+          const userContent: any = image ? [
+            { type: 'text', text: effectiveMessage },
+            { type: 'image_url', image_url: { url: image } }
+          ] : effectiveMessage;
+
+          let orResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${keyToUse}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://tmhip-myanmar.app'),
+              'X-Title': 'TMHIP Myanmar Health Platform',
+            },
+            body: JSON.stringify({
+              model: modelToTry,
+              messages: [
+                { role: 'system', content: systemInstruction },
+                { role: 'user', content: userContent }
+              ],
+              temperature: 0.3,
+              max_tokens: 1024,
+            }),
+            signal: AbortSignal.timeout(12000)
+          });
+
+          // If client key is invalid/expired (401/403), retry immediately with the server env key
+          if ((orResponse.status === 401 || orResponse.status === 403) && keyToUse !== serverOpenRouterKey && serverOpenRouterKey) {
+            console.warn('Chat: Client OpenRouter key failed (401/403). Retrying with server environment key...');
+            keyToUse = serverOpenRouterKey;
+            orResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${keyToUse}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': process.env.APP_URL || 'https://tmhip-myanmar.app',
+                'X-Title': 'ShowCare Myanmar Health Platform',
+              },
+              body: JSON.stringify({
+                model: modelToTry,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userContent }
+                ],
+                temperature: 0.3,
+                max_tokens: 1024,
+              }),
+              signal: AbortSignal.timeout(12000)
+            });
+          }
+
+          if (orResponse.ok) {
+            const data = await orResponse.json();
+            const content = data.choices?.[0]?.message?.content;
+            if (content) {
+              res.json({
+                response: cleanTextResponse(content),
+                source: 'openrouter',
+                model: modelToTry,
+                language: shouldReplyInMyanmar ? 'my' : 'en'
+              });
+              return;
+            }
+          } else {
+            const errText = await orResponse.text();
+            console.warn(`OpenRouter model ${modelToTry} status ${orResponse.status}:`, errText);
+          }
+        } catch (orErr) {
+          console.warn(`OpenRouter request for ${modelToTry} failed:`, orErr);
+        }
       }
     }
 
@@ -700,41 +851,497 @@ Your core mission is to help users understand their health concerns, provide acc
     let myanmarReply = '';
 
     if (lower.includes('burn') || lower.includes('မီးလောင်')) {
-      reply = `Critical Burn Protocol:\n• Cool with running tap water continuously for 20 minutes. Never apply ice.\n• Strictly avoid folk pastes: Never use toothpaste, soy sauce, egg white, or motor grease.\n• Sterile Dressing: Loosely drape with clean plastic cling wrap or sterile gauze.\n• Emergency Transfer: If larger than palm size or on face/hands/joints, proceed immediately to hospital or call 192.`;
-      myanmarReply = `မီးလောင်ဒဏ်ရာ အရေးပေါ် ရှေးဦးပြုစုနည်း:\n• ရေအေးဖြင့် ဆေးကြောပါ: သန့်ရှင်းသော ရေအေး (သို့) ရေပိုက်ခေါင်းမှ ရေဖြင့် အနည်းဆုံး မိနစ် ၂၀ ဆက်တိုက် လောင်းချအအေးခံပါ။ (ရေခဲလုံးဝမကပ်ရ)\n• အန္တရာယ်ရှိသော အလေ့အထများ ရှောင်ကြဉ်ပါ: သွားတိုက်ဆေး၊ ပဲငံပြာရည်၊ ကြက်ဥအကာ၊ မီးသွေးခဲစသည်တို့ လုံးဝမလိမ်းရပါ။ ပိုးဝင်ခြင်းကို ဖြစ်စေပါသည်။\n• သန့်ရှင်းစွာ အုပ်ထားပါ: အဝတ်သန့် (သို့) သန့်ရှင်းသော ပလတ်စတစ်စဖြင့် လျော့လျော့ ဖုံးအုပ်ထားပါ။\n• အရေးပေါ် ဆေးရုံပို့ဆောင်ပါ: လက်ဝါးထက်ကြီးသော ဒဏ်ရာ၊ မျက်နှာ၊ လည်ပင်း၊ ခြေလက်အဆစ်များ မီးလောင်ပါက လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်းခေါ်ဆိုပါ။`;
+      reply = `### 🌿 Burn Injury & Scald Protocol
+**Summary Explanation:**
+Burns damage the outer skin and underlying tissue due to direct heat exposure. Rapid cooling and sterile protection prevent deep infection.
+
+---
+
+#### ✅ Recommended Practices (Dos)
+* **Immediate Cooling**: Run cool tap water continuously over the burn for at least 20 minutes.
+* **Sterile Protection**: Loosely drape with clean plastic cling wrap or sterile gauze without compression.
+* **Hydration**: Drink clean water or oral rehydration fluids to replace fluid loss.
+
+#### ❌ Things to Avoid (Don'ts)
+* **Never Apply Ice**: Extreme cold worsens cell necrosis and tissue ischemia.
+* **Strictly Avoid Folk Pastes**: Never smear toothpaste, soy sauce, egg white, butter, or engine oil on burns.
+* **Do Not Pop Blisters**: Fluid blisters protect raw dermis underneath from bacterial contamination.
+
+#### 🍵 Supportive Home / Traditional Remedies
+*(Only for minor 1st degree surface burns after complete cooling)*
+* **Aloe Vera Gel (ရှားစောင်းလက်ပပ်)**: Apply pure, clean fresh aloe vera inner leaf gel to soothe redness and accelerate skin re-epithelialization.
+
+---
+
+> ⚠️ **Emergency Warning (Red Flags):**
+> If the burn is larger than the patient's palm, involves the face, neck, joints, or genitals, or turns charred/white/numb, dial Ambulance 192 immediately.
+>
+> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or treatment.*`;
+
+      myanmarReply = `### 🌿 မီးလောင်ဒဏ်ရာနှင့် အပူလောင်ခြင်း
+**အကျဉ်းချုပ် ရှင်းလင်းချက်:**
+မီးလောင်ဒဏ်ရာသည် အရေပြားဆဲလ်များ အပူလောင်ကျွမ်းခြင်းကြောင့် ဖြစ်ပွားပြီး ချက်ချင်း အပူငြိမ်းအောင် ပြုလုပ်ပေးရန်နှင့် ပိုးမဝင်စေရန် အရေးကြီးပါသည်။
+
+---
+
+#### ✅ စောင့်ထိန်း လိုက်နာရန်များ (Dos)
+* **ရေအေးဖြင့် ဆေးကြောပါ**: သန့်ရှင်းသော ရေပိုက်ခေါင်းမှ ရေအေးဖြင့် အနည်းဆုံး မိနစ် ၂၀ ဆက်တိုက် လောင်းချ အအေးခံပါ။
+* **သန့်ရှင်းစွာ အုပ်ထားပါ**: ဒဏ်ရာကို ပိုးမဝင်စေရန် သန့်ရှင်းသော အဝတ် သို့မဟုတ် ပလတ်စတစ်စဖြင့် လျော့လျော့ ဖုံးအုပ်ထားပါ။
+* **ရေဓာတ် ဖြည့်တင်းပါ**: ရေနှင့် အရည်များများ သောက်သုံးပေးပါ။
+
+#### ❌ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)
+* **ရေခဲလုံးဝမကပ်ရ**: ရေခဲကပ်ပါက ဆဲလ်တစ်သျှူးများကို ပိုမိုပျက်စီးစေပါသည်။
+* **အိမ်တွင်းပစ္စည်းများ မလိမ်းရ**: သွားတိုက်ဆေး၊ ပဲငံပြာရည်၊ ကြက်ဥအကာ၊ မီးသွေးမှုန့်များ လုံးဝမလိမ်းရပါ (ပိုးဝင်စေပါသည်)။
+* **အရည်ကြည်ဖုများ မဖောက်ရ**: အရေပြား အရည်ကြည်ဖုများကို ဆေးထိုးအပ် သို့မဟုတ် လက်သည်းဖြင့် ဖောက်ခြင်း မပြုရပါ။
+
+#### 🍵 အထောက်အကူပြု မြန်မာ့တိုင်းရင်းဆေး / အိမ်တွင်းကုထုံး (Remedies)
+*(အပူအပုပ်ငြိမ်းပြီးနောက် အပေါ်ယံ အပူလောင်ဒဏ်ရာအတွက်သာ)*
+* **ရှားစောင်းလက်ပပ် (Aloe Vera)**: သန့်ရှင်းစွာ ရေဆေးထားသော ရှားစောင်းလက်ပပ်အတွင်းသား ဂျယ်လ်ကို ဒဏ်ရာအပူငြိမ်းပြီးမှသာ ပါးပါးလိမ်းပေးပါ။
+
+---
+
+> ⚠️ **အရေးပေါ် သတိပေးချက် (Red Flags):**
+> မီးလောင်ဒဏ်ရာသည် လက်ဝါးအရွယ်အစားထက် ကြီးခြင်း၊ မျက်နှာ၊ လည်ပင်း၊ ရင်ဘတ် သို့မဟုတ် အဆစ်များ လောင်ကျွမ်းခြင်း၊ အရေပြား အဖြူရောင်/အမည်းရောင် ပြောင်းသွားပါက လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်းခေါ်ဆို၍ ဆေးရုံသို့ အမြန်ဆုံး သွားရောက်ပါ။
+>
+> 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*`;
     } else if (lower.includes('snake') || lower.includes('မြွေ')) {
-      reply = `Snakebite Emergency Life Safety Protocol:\n• Complete Immobilization: Keep victim calm and still. Splint the bitten limb; do NOT allow patient to walk.\n• Position Below Heart: Keep the bite site lower than the heart level.\n• NO Incision / NO Tourniquets: Never cut, suck venom, or apply tight tourniquets which cause limb gangrene.\n• Rapid Transport: Rush directly to township hospital with antivenom stock or call 192 immediately.`;
-      myanmarReply = `မြွေကိုက်ခံရပါက အရေးပေါ် အသက်ကယ်နည်းလမ်းများ:\n• လူနာအား ငြိမ်သက်စွာထားပါ: လူနာကို မပြေးမလွှားခိုင်းဘဲ လှုပ်ရှားမှုအနည်းဆုံးထားပါ။ ကိုက်ခံရသော ခြေ/လက်ကို သစ်သားချောင်းဖြင့် ကျောက်ပတ်တီးသဖွယ် ငြိမ်အောင် Сည်းထားပါ။\n• နှလုံးထက်နိမ့်သောနေရာတွင် ထားပါ: အဆိပ်ပျံ့နှံ့မှု နှေးကွေးစေရန် ကိုက်ခံရသည့် နေရာကို နှလုံးထက် နိမ့်အောင်ထားပါ။\n• လုံးဝ (မပြုလုပ်ရမည့်အရာများ): ဓားဖြင့်မခွဲရ၊ ပါးစပ်ဖြင့် မစုပ်ရ၊ ကြိုးဖြင့် သွေးကြောပိတ်အောင် တင်းတင်းကျပ်ကျပ် မချည်ရ (ကြွက်သားပုပ်သွားစေနိုင်ပါသည်)။\n• ဆေးရုံသို့ အမြန်ပို့ပါ: မြွေဆိပ်ဖြေဆေး (Antivenom) အဆင်သင့်ရှိသော အနီးဆုံး ဆေးရုံ/ဆေးခန်းသို့ ချက်ချင်း ပို့ဆောင်ပါ (အရေးပေါ် ၁၉၂ သို့ ခေါ်ဆိုပါ)။`;
-    } else if (lower.includes('dizzy') || lower.includes('vertigo') || lower.includes('ခေါင်းမူး') || lower.includes('မူးဝေ')) {
-      reply = `Dizziness & Vertigo Clinical Advice:\n• Immediate Safety: Sit or lie down immediately to prevent falls. Keep eyes focused on a fixed point.\n• Ginger Tea Remedy (ချင်းရေနွေးကြမ်း): Fresh ginger decoction accelerates vestibular blood flow and relieves dizziness and nausea.\n• Hydration: Drink 1-2 glasses of clean water (dehydration is a common cause of dizziness).\n• Emergency Warning: If accompanied by sudden arm weakness, slurred speech, or double vision, seek emergency stroke care immediately (Dial 192).`;
-      myanmarReply = `ခေါင်းမူးခြင်းနှင့် မူးဝေခြင်းအတွက် အိမ်တွင်း ဆေးနည်းနှင့် အကြံပြုချက်:\n• ချက်ချင်း အနားယူပါ: ချော်လဲခြင်းမဖြစ်စေရန် ချက်ချင်း ထိုင်ပါ (သို့) အိပ်ရာတွင် လှဲနေပါ။ ခေါင်းကို ရုတ်တရက် မလှည့်ပါနှင့်။\n• ချင်းရေနွေးကြမ်း (Ginger Tea): ချင်းအစို ပါးပါးလှီး ရေနွေးစိမ်၍ သောက်သုံးပါက ဦးနှောက် သွေးလည်ပတ်မှုကို အားကောင်းစေပြီး ခေါင်းမူးခြင်းနှင့် ပျို့ချင်ခြင်းကို အမြန် သက်သာစေပါသည်။\n• ရေလုံလောက်စွာ သောက်ပါ: ရေဓာတ်ခမ်းခြောက်ခြင်းကြောင့် ခေါင်းမူးတတ်သဖြင့် ရေအေး သန့်ရှင်းစွာ သောက်ပါ။\n• အရေးပေါ် သတိပြုရန်: ခေါင်းမူးခြင်းနှင့်အတူ မျက်နှာရွဲ့ခြင်း၊ ခြေလက်မသယ်နိုင်ခြင်း၊ စကားဗလုံးဗထွေးဖြစ်ခြင်းတို့ တွဲပါက လေဖြတ်ခြင်းဖြစ်နိုင်သဖြင့် လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုပါ။`;
+      reply = `### 🌿 Snakebite Emergency Life Support
+**Summary Explanation:**
+Snake venom enters the lymphatic system and bloodstream rapidly. Absolute physical immobilization is crucial to slow toxin circulation until antivenom is administered.
+
+---
+
+#### ✅ Recommended Practices (Dos)
+* **Complete Immobilization**: Keep victim completely still and calm. Splint the bitten limb with a rigid branch or board.
+* **Keep Below Heart Level**: Maintain the bite site strictly lower than heart level.
+* **Urgent Transport**: Rush immediately to the nearest township hospital carrying antivenom stock.
+
+#### ❌ Things to Avoid (Don'ts)
+* **Never Make Incisions**: Never cut the bite wound with razors or knives.
+* **Never Suck Venom**: Mouth suction does not extract venom and risks severe bacterial infection.
+* **Never Apply Tight Tourniquets**: Tight tourniquets cause arterial ischemia, severe necrosis, and limb loss.
+
+#### 🍵 Supportive Home / Traditional Remedies
+*(CRITICAL WARNING: Snakebite is a strict medical emergency. No herbal remedy can substitute for anti-snake venom)*
+* **Clean Water Rinse**: Cleanse the surface wound gently with clean water and soap without scrubbing.
+
+---
+
+> ⚠️ **Emergency Warning (Red Flags):**
+> Snakebite is an immediate life-threatening emergency. Call Ambulance 192 or rush directly to hospital with antivenom stock immediately.
+>
+> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or treatment.*`;
+
+      myanmarReply = `### 🌿 မြွေကိုက်ခံရခြင်း အရေးပေါ် အသက်ကယ်နည်းလမ်း
+**အကျဉ်းချုပ် ရှင်းလင်းချက်:**
+မြွေဆိပ်သည် သွေးနှင့် ပြန်ရည်ကြောစနစ်အတွင်းသို့ လျင်မြန်စွာ ပျံ့နှံ့နိုင်သဖြင့် လူနာကို ငြိမ်သက်စွာထားရှိခြင်းသည် အဆိပ်ပျံ့နှံ့မှုကို အထိရောက်ဆုံး နှေးကွေးစေပါသည်။
+
+---
+
+#### ✅ စောင့်ထိန်း လိုက်နာရန်များ (Dos)
+* **လူနာအား ငြိမ်သက်စွာထားပါ**: လူနာကို မပြေးမလွှားခိုင်းဘဲ လှုပ်ရှားမှုလုံးဝမရှိအောင် ထားပါ။ ခြေ/လက်ကို သစ်သားချောင်းဖြင့် ကျောက်ပတ်တီးသဖွယ် ငြိမ်အောင် စည်းထားပါ။
+* **နှလုံးထက်နိမ့်သောနေရာတွင် ထားပါ**: အဆိပ်ပျံ့နှံ့မှု နှေးကွေးစေရန် ကိုက်ခံရသည့် နေရာကို နှလုံးထက် နိမ့်အောင်ထားပါ။
+* **ဆေးရုံသို့ အမြန်ဆုံးပို့ပါ**: မြွေဆိပ်ဖြေဆေး (Antivenom) အဆင်သင့်ရှိသော မြို့နယ်ဆေးရုံသို့ အမြန်ဆုံး ပို့ဆောင်ပါ။
+
+#### ❌ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)
+* **ဓားဖြင့်မခွဲရ**: ဓား၊ မုတ်ဆိတ်ရိတ်ဓားများဖြင့် အဆိပ်ထွက်အောင် လှီးဖြတ်ခြင်း လုံးဝမပြုရပါ။
+* **ပါးစပ်ဖြင့် မစုပ်ရ**: ပါးစပ်ဖြင့် ဆိပ်စုပ်ခြင်းသည် အဆိပ်မထွက်စေသည့်အပြင် ပါးစပ်မှတစ်ဆင့် အဆိပ်သင့်စေနိုင်ပါသည်။
+* **ကြိုးဖြင့် တင်းတင်းကျပ်ကျပ် မချည်ရ**: သွေးကြောပိတ်အောင် ကြိုးချည်ပါက ခြေလက်ပုပ်ပြီး ဖြတ်ထုတ်ရသည်အထိ ဆိုးရွားစေနိုင်ပါသည်။
+
+#### 🍵 အထောက်အကူပြု မြန်မာ့တိုင်းရင်းဆေး / အိမ်တွင်းကုထုံး (Remedies)
+*(အထူးသတိပြုရန်: မြွေကိုက်ခံရခြင်းသည် အရေးပေါ် အသက်အန္တရာယ်ဖြစ်သဖြင့် တိုင်းရင်းဆေးနည်းတစ်ခုတည်းဖြင့် အချိန်မဆွဲရပါ)*
+* **သန့်ရှင်းသောရေဖြင့် ဆေးကြောခြင်း**: ဒဏ်ရာမျက်နှာပြင်ကို သန့်ရှင်းသော ရေဖြင့် ညင်သာစွာ ဆေးကြောပေးပါ။
+
+---
+
+> ⚠️ **အရေးပေါ် သတိပေးချက် (Red Flags):**
+> မြွေကိုက်ခံရပါက လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်းခေါ်ဆိုပြီး မြွေဆိပ်ဖြေဆေးရှိသော ဆေးရုံသို့ အမြန်ဆုံး သွားရောက်ပြသရပါမည်။
+>
+> 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*`;
+    } else if (lower.includes('chest') || lower.includes('heart') || lower.includes('ရင်ဘတ်') || lower.includes('နှလုံး')) {
+      reply = `### 🌿 Chest Pain & Cardiac Alert
+**Summary Explanation:**
+Acute chest pain or pressure may signify myocardial infarction (heart attack) caused by blocked coronary blood vessels. Immediate medical intervention is life-saving.
+
+---
+
+#### ✅ Recommended Practices (Dos)
+* **Immediate Rest**: Cease all physical activity immediately and rest in a comfortable, upright seated position.
+* **Loosen Tight Clothing**: Unbutton collar and belt to facilitate breathing.
+* **Emergency Dispatch**: Call Ambulance 192 immediately.
+
+#### ❌ Things to Avoid (Don'ts)
+* **Never Lie Flat**: Lying flat increases venous return and cardiac workload.
+* **Avoid Physical Exertion**: Never attempt to walk, drive oneself, or climb stairs.
+* **Do Not Eat or Drink Heavy Meals**: Avoid ingesting heavy fluids or foods.
+
+#### 🍵 Supportive Home / Traditional Remedies
+*(CRITICAL: Heart conditions require emergency evaluation; do not delay for herbal tea)*
+* **Aspirin Protocol**: If advised by an emergency medical dispatcher and the patient has no active bleeding ulcer, chewing 300mg soluble aspirin can preserve cardiac tissue.
+
+---
+
+> ⚠️ **Emergency Warning (Red Flags):**
+> Squeezing central chest pain spreading to left shoulder, jaw, neck, or back accompanied by cold sweat and breathlessness requires immediate ER admission.
+>
+> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or treatment.*`;
+
+      myanmarReply = `### 🌿 ရင်ဘတ်အောင့်ခြင်းနှင့် နှလုံး အရေးပေါ် သတိပေးချက်
+**အကျဉ်းချုပ် ရှင်းလင်းချက်:**
+ရင်ဘတ်တွင် တင်းကျပ်စွာ အောင့်ခြင်းသည် နှလုံးသွေးကြောပိတ်ခြင်း (Heart Attack) ၏ အဓိက လက္ခဏာဖြစ်နိုင်ပြီး ချက်ချင်း အရေးပေါ် ဆေးကုသမှုခံယူရန် အထူးလိုအပ်ပါသည်။
+
+---
+
+#### ✅ စောင့်ထိန်း လိုက်နာရန်များ (Dos)
+* **ချက်ချင်း အနားယူပါ**: လှုပ်ရှားမှုအားလုံး ချက်ချင်းရပ်ပြီး မတ်မတ် သက်တောင့်သက်သာ ထိုင်နေပါ။
+* **အဝတ်အစား ချောင်ချိအောင်ထားပါ**: လည်ပင်းကြယ်သီးနှင့် ခါးပတ်များကို ဖြေလျှော့ပေးပါ။
+* **အရေးပေါ် ၁၉၂ သို့ ခေါ်ဆိုပါ**: အရေးပေါ် လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုပါ။
+
+#### ❌ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)
+* **လဲလျောင်းမအိပ်ရ**: လှဲအိပ်လိုက်ပါက နှလုံးအလုပ်လုပ်ရမှု ပိုမိုများပြားစေပါသည်။
+* **လမ်းလျှောက်ခြင်း/ကိုယ်တိုင်ကားမောင်းခြင်း ရှောင်ပါ**: ဆေးရုံသို့ ကိုယ်တိုင် လမ်းလျှောက်သွားခြင်း မပြုရပါ။
+* **အစားအသောက် အဆီအစိမ့်များ မကျွေးရ**: အစားအစာများ အတင်းအကျပ် မကျွေးပါနှင့်။
+
+#### 🍵 အထောက်အကူပြု မြန်မာ့တိုင်းရင်းဆေး / အိမ်တွင်းကုထုံး (Remedies)
+*(အထူးသတိပြုရန်: နှလုံးဝေဒနာသည် ဆေးရုံအရေးပေါ် ကုသမှုသာ ဦးစားပေးဖြစ်ပါသည်)*
+* **အသက်ရှူ လေဝင်လေထွက် ကောင်းအောင်ထားခြင်း**: လူနာအား လေဝင်လေထွက် ကောင်းမွန်သောနေရာတွင် ထားရှိပြီး စိတ်အေးအေးထားစေပါ။
+
+---
+
+> ⚠️ **အရေးပေါ် သတိပေးချက် (Red Flags):**
+> ရင်ဘတ်အလယ်မှ လေးလံတင်းကျပ်စွာ အောင့်ခြင်း၊ လက်ဝဲဘက်လက်မောင်း၊ မေးရိုးသို့ နာကျင်မှုပျံ့နှံ့ခြင်း၊ ချွေးစေးပြန်ပြီး အသက်ရှူကြပ်ခြင်းတို့ ဖြစ်ပါက ဆေးရုံသို့ အမြန်ဆုံး သွားရောက်ပါ။
+>
+> 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*`;
+    } else if (lower.includes('stroke') || lower.includes('paralysis') || lower.includes('လေဖြတ်') || lower.includes('မျက်နှာရွဲ့')) {
+      reply = `### 🌿 Stroke & Paralysis Emergency Protocol (F.A.S.T.)
+**Summary Explanation:**
+Stroke occurs when blood flow to a brain region is blocked or interrupted. Every passing minute causes brain cell loss; rapid clot-dissolving treatment within the golden 3-4.5 hours is critical.
+
+---
+
+#### ✅ Recommended Practices (Dos)
+* **F - Face Drooping**: Check if one side of the face is drooping or uneven when smiling.
+* **A - Arm Weakness**: Ask to raise both arms; notice if one arm drifts downward.
+* **S - Speech Difficulty**: Check if speech is slurred, garbled, or hard to understand.
+* **T - Time to Call 192**: Dial emergency ambulance 192 immediately.
+
+#### ❌ Things to Avoid (Don'ts)
+* **Never Administer Oral Fluids or Food**: Impaired swallowing reflexes cause lethal airway aspiration pneumonia.
+* **Do Not Give Lowering Pills Unsupervised**: Drastic blood pressure drops reduce cerebral perfusion.
+* **Do Not Massage or Pierce with Needles**: Puncturing fingertips or earlobes does not cure stroke.
+
+#### 🍵 Supportive Home / Traditional Remedies
+*(Stroke requires emergency hospital neuro-care; do not delay)*
+* **Stable Lateral Position**: If vomiting, turn patient onto their side in recovery position to protect the airway.
+
+---
+
+> ⚠️ **Emergency Warning (Red Flags):**
+> Sudden facial weakness, inability to move arm/leg, slurred speech, or loss of balance requires immediate transport to a hospital capable of emergency CT scan.
+>
+> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or treatment.*`;
+
+      myanmarReply = `### 🌿 လေဖြတ်ရောဂါ အရေးပေါ် စစ်ဆေးချက်နှင့် ရှေးဦးပြုစုနည်း
+**အကျဉ်းချုပ် ရှင်းလင်းချက်:**
+လေဖြတ်ခြင်း (Stroke) သည် ဦးနှောက်သွေးကြောပိတ်ခြင်း သို့မဟုတ် သွေးကြောပေါက်ခြင်းကြောင့် ဖြစ်ပွားပြီး ဦးနှောက်ဆဲလ်များ မပျက်စီးစေရန် ရွှေရောင်နာရီ (၃ နာရီ) အတွင်း ဆေးရုံသို့ ရောက်ရှိကုသရန် အရေးကြီးပါသည်။
+
+---
+
+#### ✅ စောင့်ထိန်း လိုက်နာရန်များ (Dos)
+* **မျက်နှာ စစ်ဆေးပါ (Face)**: ပြုံးခိုင်းကြည့်ပါ၊ မျက်နှာ သို့မဟုတ် ပါးစပ် တစ်ခြမ်း ရွဲ့စောင်းနေပါသလား။
+* **လက်မောင်း စစ်ဆေးပါ (Arms)**: လက်နှစ်ဖက် မြှောက်ခိုင်းပါ၊ တစ်ဖက် မမြှောက်နိုင်ဘဲ အောက်သို့ ပြုတ်ကျနေပါသလား။
+* **စကားပြော စစ်ဆေးပါ (Speech)**: စကားပြောခိုင်းပါ၊ စကားဗလုံးဗထွေးဖြစ်နေပါသလား။
+* **အချိန်မဆိုင်းဘဲ ခေါ်ဆိုပါ (Time)**: ချက်ချင်း လူနာတင်ယာဉ် ၁၉၂ သို့ ခေါ်ဆိုပြီး ဆေးရုံသို့ အမြန်ဆုံး ပို့ဆောင်ပါ။
+
+#### ❌ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)
+* **ရေ သို့မဟုတ် ဆေး အတင်းမတိုက်ရ**: လေဖြတ်လူနာသည် မျိုချနိုင်စွမ်း ပျက်စီးနေတတ်သဖြင့် အဆုတ်ထဲ သီးဝင်ကာ အသက်အန္တရာယ် ဖြစ်စေနိုင်ပါသည်။
+* **သွေးဖောက်ခြင်း မပြုရ**: လက်ထိပ်များကို အပ်ဖြင့်ထိုးဖောက်ခြင်း၊ သွေးထုတ်ခြင်းတို့သည် လေဖြတ်ခြင်းကို မသက်သာစေဘဲ ပိုးဝင်စေပါသည်။
+* **အနှိပ်သည်ဖြင့် အတင်းမနှိပ်ရ**: အကြောတင်းသည်ဟုဆိုကာ ပြင်းထန်စွာ နှိပ်နယ်ခြင်း မပြုရပါ။
+
+#### 🍵 အထောက်အကူပြု မြန်မာ့တိုင်းရင်းဆေး / အိမ်တွင်းကုထုံး (Remedies)
+*(အထူးသတိပြုရန်: လေဖြတ်ခြင်းသည် အရေးပေါ် ဦးနှောက်ဆေးကုသမှု လိုအပ်သဖြင့် ဆေးရုံသို့သာ အမြန်ဆုံး သွားပါ)*
+* **ဘေးစောင်း အနေအထားထားခြင်း**: အန်ပါက အသက်ရှူလမ်းကြောင်း မပိတ်စေရန် လူနာကို ဘေးစောင်းအနေအထားတွင် ညင်သာစွာ ထားပေးပါ။
+
+---
+
+> ⚠️ **အရေးပေါ် သတိပေးချက် (Red Flags):**
+> မျက်နှာရွဲ့ခြင်း၊ စကားမပီခြင်း၊ ခြေလက်တစ်ခြမ်း မလှုပ်ရှားနိုင်ခြင်း စသည့် လက္ခဏာများ တွေ့ရှိပါက အချိန်ဆွဲမနေဘဲ လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုပါ။
+>
+> 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*`;
     } else if (lower.includes('headache') || lower.includes('migraine') || lower.includes('ခေါင်းကိုက်') || lower.includes('ဇာတ်')) {
-      reply = `Headache & Tension Relief Guidance:\n• Warm Ginger Tea (ချင်းရေနွေးကြမ်း): Natural anti-inflammatory properties of ginger ease vascular headaches and tension.\n• Hot Compress: Apply a warm towel to the back of the neck for 15 minutes to relax tight neck muscles.\n• Hydration & Rest: Rest in a quiet, dimmed room and drink 2 glasses of water.\n• Emergency Red Flag: Thunderclap headache (sudden severe pain like a blow to the head) requires emergency hospital transport.`;
-      myanmarReply = `ခေါင်းကိုက်ခြင်းနှင့် ဇာတ်ကြောတက်ခြင်း သက်သာစေမည့် အိမ်တွင်း ဆေးနည်းများ:\n• ချင်းရေနွေးကြမ်း သောက်ပါ: ချင်းရည်နွေးနွေး သောက်ပေးခြင်းသည် ရောင်ရမ်းမှုကို ကျစေပြီး ခေါင်းကိုက်ခြင်းကို သက်သာစေပါသည်။\n• ရေနွေးဝတ် ကပ်ပေးပါ: ဇာတ်ကြောနှင့် ဂုတ်ပိုးတွင် ရေနွေးဝတ် မိနစ် ၁၅ ခန့် ကပ်ပေးပါက ကြွက်သားတင်းမာမှုကို ပြေလျော့စေပါသည်။\n• အနားယူပါ: တိတ်ဆိတ်၍ အလင်းရောင်မှိန်သော အခန်းတွင် အနားယူပြီး ရေ ၂ ဖန်ခွက် သောက်ပါ။\n• အရေးပေါ် သတိပြုရန်: ရုတ်တရက် အလွန်ပြင်းထန်စွာ ခေါင်းကိုက်ခြင်း (Thunderclap headache) ဖြစ်ပါက အရေးပေါ် ဆေးရုံသို့ ချက်ချင်း သွားရောက်ပါ။`;
-    } else if (lower.includes('pressure') || lower.includes('hypertension') || lower.includes('သွေးတိုး') || lower.includes('သွေးပေါင်')) {
-      reply = `High Blood Pressure & Hypertension Care:\n• Garlic (ကြက်သွန်ဖြူ): Raw crushed garlic (1 clove daily) contains allicin which relaxes blood vessels.\n• Sodium Reduction: Reduce daily salt intake below 1 teaspoon (5g per day).\n• Rest & Breathing: Sit comfortably, breathe deeply and slowly for 10 minutes.\n• Warning: Never stop prescribed antihypertensive pills without physician consent.`;
-      myanmarReply = `သွေးတိုးရောဂါအတွက် အိမ်တွင်း ဆေးနည်းနှင့် အကြံပြုချက်များ:\n• ကြက်သွန်ဖြူ သုံးစွဲပုံ: ကြက်သွန်ဖြူ ၁ တောင့်ကို ထိန်းထု၍ ပါးစပ်ထဲ ခတ္တထားကာ သောက်သုံးပေးပါက သွေးကြောများကို ပြေလျော့စေပါသည်။\n• ဆား လျှော့စားပါ: တစ်နေ့လျှင် ဆား စားသုံးမှုကို လက်ဖက်ရည်ဇွန်း ၁ ဇွန်းအောက် လျှော့ချပါ။\n• အသက်ရှူ လေ့ကျင့်ခန်း: အေးဆေးစွာ ထိုင်ပြီး ဖြည်းဖြည်းနှင့် နက်နက် အသက်ရှူ လေ့ကျင့်ခန်း ၁၀ မိနစ် လုပ်ပါ။\n• သတိပြုရန်: ဆရာဝန် ညွှန်ကြားထားသော သွေးတိုးကျဆေးများကို မပြတ်ဘဲ ပုံမှန် သောက်သုံးပါ၊ ရုတ်တရက် မရပ်လိုက်ပါနှင့်။`;
-    } else if (lower.includes('diabet') || lower.includes('sugar') || lower.includes('ဆီးချို') || lower.includes('သွေးချို')) {
-      reply = `Diabetes & Blood Sugar Control Guidance:\n• Bitter Melon (ကြက်ဟင်းခါးသီး): Fresh bitter melon juice or tea helps improve insulin sensitivity and lower blood glucose.\n• Dietary Management: Avoid refined sugars, sweetened soft drinks, and high-glycemic white rice.\n• Foot Care: Inspect feet daily for small cuts or numbness.\n• Warning: Monitor blood sugar regularly and take prescribed Metformin/Insulin as directed by your physician.`;
-      myanmarReply = `ဆီးချို/သွေးချို ထိန်းညှိရန် အိမ်တွင်း ဆေးနည်းနှင့် ဂရုစိုက်ရန်များ:\n• ကြက်ဟင်းခါးသီး သုံးစွဲပုံ: ကြက်ဟင်းခါးသီး သတ္တုရည် သို့မဟုတ် ကြက်ဟင်းခါးသီး ရေနွေးကြမ်း သောက်ပေးခြင်းသည် သွေးတွင်းသကြားဓာတ်ကို လျှော့ချပေးပါသည်။\n• အစားအသောက် လျှော့ချပါ: သကြား၊ အချိုရည်များ၊ မုန့်များနှင့် ထမင်းဖြူ အလွန်အကျွံ စားခြင်းကို လျှော့ချပါ။\n• ခြေထောက် ဂရုစိုက်ပါ: ဆီးချိုဝေဒနာရှင်များသည် ခြေထောက်တွင် ဒဏ်ရာ သို့မဟုတ် ထုံကျင်ခြင်း ရှိမရှိ နေ့စဉ် စစ်ဆေးပါ။\n• သတိပြုရန်: ဆရာဝန် ညွှန်ကြားထားသော ဆီးချိုဆေးများကို ပုံမှန် သောက်သုံးပြီး သွေးချိုကို စမှန် စစ်ဆေးပါ။`;
+      reply = `### 🌿 Headache & Tension Neck Relief
+**Summary Explanation:**
+Headaches and neck tension often stem from muscular contraction, vascular spasms, dehydration, prolonged eye strain, or poor posture.
+
+---
+
+#### ✅ Recommended Practices (Dos)
+* **Rest in Quiet Environment**: Rest in a dimmed, calm, and well-ventilated room with eyes closed.
+* **Warm Neck Compress**: Apply a warm damp towel to the back of the neck and shoulders for 15 minutes to relax tight muscles.
+* **Adequate Hydration**: Drink 2 glasses of clean lukewarm water to resolve mild dehydration.
+
+#### ❌ Things to Avoid (Don'ts)
+* **Avoid Screen Glare**: Refrain from using smartphones, laptops, or bright fluorescent lighting.
+* **Avoid Excess Caffeine or Alcohol**: These trigger rebound vascular headaches.
+* **Avoid Sudden Neck Jerks**: Avoid aggressive chiropractic neck cracks or sudden jerky twists.
+
+#### 🍵 Supportive Home / Traditional Remedies
+*(Safe, natural traditional remedies to soothe headache)*
+* **Ginger Tea (ချင်းရေနွေးကြမ်း)**: Thinly slice 3-4 pieces of fresh ginger into hot water; steep for 7 minutes and sip warm. Ginger naturally inhibits prostaglandins and eases vascular throbbing.
+
+---
+
+> ⚠️ **Emergency Warning (Red Flags):**
+> If headache strikes suddenly like a thunderclap (worst headache of your life), or is accompanied by stiff neck, high fever, or vision loss, seek emergency care immediately.
+>
+> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or treatment.*`;
+
+      myanmarReply = `### 🌿 ခေါင်းကိုက်ခြင်းနှင့် ဇာတ်ကြောတက်ခြင်း
+**အကျဉ်းချုပ် ရှင်းလင်းချက်:**
+ခေါင်းကိုက်ခြင်းနှင့် ဇာတ်ကြောတက်ခြင်းသည် စိတ်ဖိစီးမှု၊ ကြွက်သားတင်းမာမှု၊ ရေဓာတ်ခမ်းခြောက်မှု သို့မဟုတ် ဖုန်း/ကွန်ပျူတာ အကြည့်များခြင်းကြောင့် အဖြစ်များပါသည်။
+
+---
+
+#### ✅ စောင့်ထိန်း လိုက်နာရန်များ (Dos)
+* **အနားယူပါ**: တိတ်ဆိတ်၍ အလင်းရောင်မှိန်သော အခန်းတွင် မျက်စိမှိတ်ပြီး သက်တောင့်သက်သာ အနားယူပါ။
+* **ရေနွေးဝတ် ကပ်ပေးပါ**: ဇာတ်ကြောနှင့် ဂုတ်ပိုးတွင် ရေနွေးဝတ် မိနစ် ၁၅ ခန့် ကပ်ပေးပါက တင်းမာနေသော ကြွက်သားများကို ပြေလျော့စေပါသည်။
+* **ရေလုံလောက်စွာ သောက်ပါ**: ရေနွေး သို့မဟုတ် ရေကျက်အေး ၂ ဖန်ခွက် သောက်သုံးပေးပါ။
+
+#### ❌ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)
+* **ဖုန်းနှင့် ကွန်ပျူတာ အကြည့်မများရ**: အလင်းစူးစူး ဖုန်းမျက်နှာပြင်များကို ကြည့်ခြင်း ရှောင်ကြဉ်ပါ။
+* **ကော်ဖီနှင့် အရက် အလွန်အကျွံ မသောက်ရ**: ကဖင်းဓာတ်နှင့် အရက်သည် သွေးကြောများကို ကျဉ်းစေပြီး ခေါင်းကိုက်ခြင်းကို ပိုဆိုးစေပါသည်။
+* **လည်ပင်းကို အတင်းချိုးခြင်း ရှောင်ပါ**: ဇာတ်ကြောကို အတင်းဆွဲလှည့် ချိုးဖဲ့ခြင်း မပြုလုပ်ရပါ။
+
+#### 🍵 အထောက်အကူပြု မြန်မာ့တိုင်းရင်းဆေး / အိမ်တွင်းကုထုံး (Remedies)
+*(အန္တရာယ်ကင်းပြီး အိမ်တွင် အလွယ်တကူ ရနိုင်သော ဆေးနည်း)*
+* **ချင်းရေနွေးကြမ်း (Ginger Tea)**: ချင်းအစို ပါးပါးလှီး ရေနွေးစိမ်၍ သောက်သုံးပါက သွေးလည်ပတ်မှု ကောင်းမွန်စေပြီး ရောင်ရမ်းမှုကို ကျစေကာ ခေါင်းကိုက်ခြင်းကို သက်သာစေပါသည်။
+
+---
+
+> ⚠️ **အရေးပေါ် သတိပေးချက် (Red Flags):**
+> ရုတ်တရက် အလွန်ပြင်းထန်စွာ ခေါင်းကိုက်ခြင်း (Thunderclap headache)၊ ဇက်ခိုင်ခြင်း၊ အဖျားကြီးခြင်း၊ မျက်စိမှုန်ခြင်း သို့မဟုတ် စကားမပီခြင်းတို့ တွဲပါက ဆေးရုံသို့ ချက်ချင်း သွားရောက်ပြသပါ။
+>
+> 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*`;
     } else if (lower.includes('cough') || lower.includes('fever') || lower.includes('cold') || lower.includes('ချောင်းဆိုး') || lower.includes('ဖျား') || lower.includes('ရင်ကျပ်') || lower.includes('နှာစီး')) {
-      reply = `Cough, Cold & Fever Remedies:\n• Holy Basil & Honey (ပင်စိမ်းရွက်နှင့် ပျားရည်): Steep 7-10 fresh basil leaves in boiling water with a spoon of honey to soothe throat irritation and cough.\n• Ginger & Lime Tea (ချင်းနှင့် သံပရာရည်): Expels mucus and relieves sore throat.\n• Hydration & Rest: Drink plenty of warm fluids.\n• Warning: Seek medical examination if fever exceeds 3 days or if coughing blood occurs.`;
-      myanmarReply = `နှာစီး၊ ချောင်းဆိုးနှင့် အအေးမိ အဖျားအတွက် အိမ်တွင်း ဆေးနည်းများ:\n• ပင်စိမ်းရွက်နှင့် ပျားရည်: ပင်စိမ်းရွက် ၇-၁၀ ရွက်ကို ရေနွေးဖျောပြီး ပျားရည် ၁ ဇွန်း ရောသောက်ပါက ချောင်းဆိုးခြင်းနှင့် လည်ချောင်းယားခြင်းကို သက်သာစေပါသည်။\n• ချင်းနှင့် သံပရာရည်: ချင်းပြုတ်ရည်ထဲ သံပရာရည် ခတ်သောက်ပါက သလိပ်ကင်းစင်စေပါသည်။\n• ရေနွေးများများသောက်ပါ: ရေနွေး၊ စွပ်ပြုတ်နွေးနွေးများ သောက်ပြီး လုံလောက်စွာ အနားယူပါ။\n• သတိပြုရန်: အဖျား ၃ ရက်ထက်ပိုပါက သို့မဟုတ် အသက်ရှူကျပ်ပါက ဆရာဝန်နှင့် ပြသပါ။`;
-    } else if (lower.includes('tooth') || lower.includes('dental') || lower.includes('gum') || lower.includes('သွား') || lower.includes('လေးညှင်း')) {
-      reply = `Toothache & Dental Relief:\n• Clove Oil (လေးညှင်းဆီ): Apply a small drop of clove oil on a cotton swab to the aching tooth for natural numbing pain relief.\n• Warm Saltwater Rinse: Dissolve 1/2 tsp salt in warm water and rinse mouth for 30 seconds.\n• Dental Consultation: See a dentist promptly to treat underlying tooth decay or infection.`;
-      myanmarReply = `သွားကိုက်ခြင်းနှင့် သွားဖုံးနာခြင်းအတွက် အိမ်တွင်း ဆေးနည်းများ:\n• လေးညှင်းဆီ (Clove Oil): လေးညှင်းဆီ ၁ စက်ကို ဂွမ်းစဖြင့် သွားကိုက်သည့်နေရာတွင် တို့ပေးပါက နာကျင်မှုကို ချက်ချင်း လျှော့ပါးစေပါသည်။\n• ဆားနွေးရေ ပလုတ်ကျင်းပါ: ရေနွေးတစ်ဖန်ခွက်တွင် ဆား လက်ဖက်ရည်ဇွန်း အဝက်ထည့်၍ စက္ကန့် ၃၀ ခန့် ပလုတ်ကျင်းပေးပါ။\n• သတိပြုရန်: သွားပိုးစားခြင်းနှင့် သွားဖုံးရောင်ခြင်း ပျောက်ကင်းစေရန် သွားဆရာဝန်ထံ ပြသပါ။`;
-    } else if (lower.includes('joint') || lower.includes('pain') || lower.includes('turmeric') || lower.includes('အဆစ်') || lower.includes('ဒူး') || lower.includes('ခါး') || lower.includes('အကိုက်အခဲ')) {
-      reply = `Joint Pain & Arthritis Relief:\n• Turmeric & Black Pepper (နနွင်းနှင့် ငရုတ်ကောင်း): Turmeric combined with a pinch of black pepper provides strong natural anti-inflammatory joint relief.\n• Warm Compress: Apply a warm water bag to sore knees or back for 15-20 minutes.\n• Gentle Exercise: Avoid high-impact stress; engage in light walking or joint mobility exercises.`;
-      myanmarReply = `ဒူးနာ၊ ခါးနာ၊ အဆစ်အမြစ်ရောင်ရမ်းခြင်းအတွက် တိုင်းရင်းဆေးနည်းများ:\n• နနွင်းနှင့် ငရုတ်ကောင်း: နနွင်းမှုန့်ကို ငရုတ်ကောင်းစေ့ အနည်းငယ်နှင့် တွဲဖက်သောက်သုံးပါက အဆစ်အမြစ် ရောင်ရမ်းနာကျင်ခြင်းကို သက်သာစေပါသည်။\n• ရေနွေးအိတ် ကပ်ပေးပါ: နာကျင်သော ဒူး သို့မဟုတ် ခါးတွင် ရေနွေးအိတ် မိနစ် ၅-၂၀ ကပ်ပေးပါ။\n• လမ်းလျှောက်ပါ: လေးလံသော ပစ္စည်းများ မမပါဘဲ ပေါ့ပါးစွာ လမ်းလျှောက်ပေးပါ။`;
-    } else if (lower.includes('stomach') || lower.includes('gastric') || lower.includes('acid') || lower.includes('အစာအိမ်') || lower.includes('ရင်ပြည့်') || lower.includes('လေအောင့်') || lower.includes('အစာမကြေ')) {
-      reply = `Stomach & Indigestion Relief:\n• Fresh Ginger Decoction (ချင်းအစို): Thinly slice fresh ginger into boiling water to accelerate digestion and relieve abdominal colic.\n• Dietary Habits: Eat smaller, frequent meals. Avoid oily, fried, and highly spiced foods.\n• Warning: If experiencing severe blood in stool or persistent vomiting, seek urgent hospital care.`;
-      myanmarReply = `အစာမကြေ၊ ရင်ပြည့်ရင်ကယ်နှင့် အစာအိမ် လေထိုးခြင်းအတွက် ဆေးနည်း:\n• ချင်းအစို ရေနွေးဖျော: ချင်းအစို ပါးပါးလှီး ရေနွေးကြမ်းကဲ့သို့ သောက်ပေးပါက အစာခြေစနစ်ကို မြန်ဆန်စေပြီး ရင်ပြည့်ခြင်းကို သက်သာစေပါသည်။\n• အစားအသောက် ဆောင်ရန်: အဆီအစိမ့်များ၊ စပ်သော အစားအစာများကို လျှော့စားပြီး အစားကို နည်းနည်းနှင့် ခပ်စိပ်စိပ် စားပါ။\n• သတိပြုရန်: ဝမ်းမည်းမည်းသွားခြင်း သို့မဟုတ် သွေးအန်ခြင်း ဖြစ်ပါက ဆေးရုံသို့ ချက်ချင်း သွားပါ။`;
-    } else if (lower.includes('skin') || lower.includes('rash') || lower.includes('itch') || lower.includes('အရေပြား') || lower.includes('ယားယံ') || lower.includes('အဖု')) {
-      reply = `Skin Rash & Itching Relief:\n• Aloe Vera Gel (ရှားစောင်းလက်ပပ်): Apply pure fresh aloe vera gel to cool skin inflammation and relieve itching.\n• Neem Bath (တမာရွက် ရေချိုးနည်း): Boil fresh neem leaves in water and use for bathing as a natural antiseptic.\n• Warning: Avoid scratching lesions to prevent secondary bacterial infection.`;
-      myanmarReply = `အရေပြား ယားယံခြင်းနှင့် အဖုအပိမ့်များအတွက် အိမ်တွင်း ဆေးနည်းများ:\n• ရှားစောင်းလက်ပပ် ဂျယ်လ်: သန့်ရှင်းသော ရှားစောင်းလက်ပပ် အနှစ်ကို သုတ်လိမ်းပေးပါက ယားယံခြင်းနှင့် အဖုအပိမ့်များကို အေးမြ ပျောက်ကင်းစေပါသည်။\n• တမာရွက် ရေချိုးနည်း: တမာရွက် ပြုတ်ရည်ဖြင့် ရေချိုးပေးပါက သဘာဝ ပိုးသတ်ဆေးအဖြစ် ယားယံခြင်းကို အမြန် ပျောက်ကင်းစေပါသည်။\n• သတိပြုရန်: ပိုးမဝင်စေရန် ယားယံသည့်နေရာများကို လက်ဖြင့် ကုတ်ဖဲ့ခြင်း မပြုရပါ။`;
+      reply = `### 🌿 Cough, Cold & Mild Fever Care
+**Summary Explanation:**
+Upper respiratory colds and coughs are typically viral infections causing airway mucosal inflammation, mucus overproduction, and elevated body temperature.
+
+---
+
+#### ✅ Recommended Practices (Dos)
+* **Warm Fluid Hydration**: Drink warm boiled water, warm broth, or clear soups frequently to thin bronchial mucus.
+* **Steam Inhalation**: Inhale warm steam for 10 minutes to clear nasal congestion and soothe vocal folds.
+* **Warm Sponging for Fever**: Wipe face, neck, and limbs with lukewarm water; avoid ice.
+
+#### ❌ Things to Avoid (Don'ts)
+* **Avoid Cold Drinks & Iced Foods**: Cold liquids irritate throat nerves and trigger coughing paroxysms.
+* **Avoid Oily & Deep-Fried Foods**: Greasy items aggravate throat irritation and slow digestion.
+* **Do Not Self-Medicate Antibiotics**: Antibiotics are ineffective against viral colds and induce bacterial resistance.
+
+#### 🍵 Supportive Home / Traditional Remedies
+*(Safe, natural herbal teas to calm cough)*
+* **Holy Basil & Honey (ပင်စိမ်းနှင့် ပျားရည်)**: Steep 7-10 clean fresh basil leaves in a cup of boiling water with 1 teaspoon of pure honey; sip warm twice daily.
+* **Ginger & Lime Infusion (ချင်းနှင့် သံပရာရည်)**: Fresh crushed ginger steeped in hot water with a squeeze of fresh lime clears phlegm.
+
+---
+
+> ⚠️ **Emergency Warning (Red Flags):**
+> If high fever exceeds 38.5°C for more than 3 days, breathing is rapid/labored, or cough brings up blood or rusty phlegm, consult a physician promptly.
+>
+> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or treatment.*`;
+
+      myanmarReply = `### 🌿 ချောင်းဆိုးခြင်း၊ နှာစီးခြင်းနှင့် အအေးမိဖျားနာခြင်း
+**အကျဉ်းချုပ် ရှင်းလင်းချက်:**
+အအေးမိခြင်းနှင့် ချောင်းဆိုးခြင်းသည် ဗိုင်းရပ်စ်ပိုးကြောင့် အသက်ရှူလမ်းကြောင်း ရောင်ရမ်းကာ သလိပ်ထွက်ခြင်းနှင့် အဖျားငွေ့ငွေ့ရှိခြင်းတို့ကို ဖြစ်ပေါ်စေပါသည်။
+
+---
+
+#### ✅ စောင့်ထိန်း လိုက်နာရန်များ (Dos)
+* **ရေနွေးများများ သောက်ပါ**: ရေနွေးနွေး၊ စွပ်ပြုတ်နွေးနွေးများကို မကြာခဏ သောက်ပေးခြင်းဖြင့် သလိပ်ကျစေပြီး လည်ချောင်းကို စိုစွတ်စေပါသည်။
+* **ရေနွေးငွေ့ ရှူပေးပါ**: ရေနွေးငွေ့ကို ၅-၁၀ မိနစ်ခန့် ရှူပေးပါက နှာခေါင်းပိတ်ခြင်းနှင့် ရင်ကျပ်ခြင်းကို သက်သာစေပါသည်။
+* **ရေပတ်တိုက်ပါ**: အဖျားတက်ပါက ရေခဲရေ မသုံးဘဲ ရေကျက်အေးဝတ်ဖြင့် ချိုင်း၊ ပေါင်ခြံနှင့် လည်ပင်းတို့ကို ပွတ်တိုက်ပေးပါ။
+
+#### ❌ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)
+* **ရေခဲရေနှင့် အအေးစာများ ရှောင်ပါ**: ရေခဲရေ၊ ရေခဲမုန့်နှင့် အအေးမိစေသော အစားအစာများသည် လည်ချောင်းယားပြီး ချောင်းပိုဆိုးစေပါသည်။
+* **အကြော်အလှော်နှင့် အစပ်များ ရှောင်ပါ**: အဆီများသော အကြော်များ၊ အစပ်လွန်ကဲသော အစားအစာများကို ရှောင်ကြဉ်ပါ။
+* **ပဋိဇီဝပိုးသတ်ဆေးများ မိမိသဘောဖြင့် မသောက်ရပါ**: အအေးမိဗိုင်းရပ်စ်အတွက် ပိုးသတ်ဆေးများကို ဆရာဝန်ညွှန်ကြားချက်မပါဘဲ မသောက်သင့်ပါ။
+
+#### 🍵 အထောက်အကူပြု မြန်မာ့တိုင်းရင်းဆေး / အိမ်တွင်းကုထုံး (Remedies)
+*(အန္တရာယ်ကင်းပြီး အိမ်တွင် အလွယ်တကူ ပြုလုပ်နိုင်သော ဆေးနည်းများ)*
+* **ပင်စိမ်းရွက်နှင့် ပျားရည်**: ပင်စိမ်းရွက် ၇-၁၀ ရွက်ကို ရေနွေးဖျောပြီး ပျားရည် လက်ဖက်ရည်ဇွန်း ၁ ဇွန်း ရောစပ်သောက်သုံးပါက ချောင်းဆိုးခြင်းကို အမြန် သက်သာစေပါသည်။
+* **ချင်းနှင့် သံပရာရည်**: ချင်းပြုတ်ရည်ထဲသို့ သံပရာရည် အနည်းငယ်ညှစ်၍ သောက်ပါက လည်ချောင်းရှင်းပြီး သလိပ်ကင်းစင်စေပါသည်။
+
+---
+
+> ⚠️ **အရေးပေါ် သတိပေးချက် (Red Flags):**
+> အဖျားသည် ၃ ရက်ထက်ပို၍ မကျခြင်း၊ အသက်ရှူရခက်ခဲခြင်း/ရင်ကျပ်ခြင်း သို့မဟုတ် ချောင်းဆိုးရာတွင် သွေးပါလာပါက ဆရာဝန်နှင့် အမြန်ဆုံး သွားရောက်ပြသပါ။
+>
+> 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*`;
+    } else if (lower.includes('diarrhea') || lower.includes('loose') || lower.includes('ors') || lower.includes('ဝမ်းလျှော') || lower.includes('ဝမ်းပျက်') || lower.includes('ဓာတ်ဆား')) {
+      reply = `### 🌿 Diarrhea & Dehydration Management
+**Summary Explanation:**
+Diarrhea is characterized by frequent loose, watery stools leading to rapid depletion of water and vital electrolytes (sodium, potassium).
+
+---
+
+#### ✅ Recommended Practices (Dos)
+* **Oral Rehydration Salts (ORS)**: Dissolve 1 sachet of WHO-standard ORS in 1 liter of boiled, cooled clean water. Sip after each bowel movement.
+* **Light Digestible Diet**: Eat soft rice porridge (congee), ripe bananas, and steamed potatoes.
+* **Maintain Hand Hygiene**: Wash hands thoroughly with soap before eating and after toilet use.
+
+#### ❌ Things to Avoid (Don'ts)
+* **Avoid Sugary Soft Drinks & Dairy**: Sweet drinks worsen osmotic diarrhea; cow's milk causes gastrointestinal cramping.
+* **Avoid Oily & Spicy Foods**: Chili and greasy foods accelerate intestinal peristalsis.
+* **Avoid Anti-motility Pills without Advice**: Do not take Loperamide if fever or dysentery is present.
+
+#### 🍵 Supportive Home / Traditional Remedies
+*(Natural remedies to restore hydration and electrolytes)*
+* **Fresh Young Coconut Water (အုန်းရည်နုနု)**: Natural electrolytes in coconut water safely replenish lost potassium.
+* **Thin Rice Water (ဆန်ပြုတ်ရည်ကျဲကျဲ)**: Lightly salted rice water provides easily absorbed carbohydrates and fluid.
+
+---
+
+> ⚠️ **Emergency Warning (Red Flags):**
+> If stools contain visible blood or mucus, high fever develops, or severe dehydration occurs (sunken eyes, extreme thirst, no urine for 6 hours), rush to a clinic immediately.
+>
+> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or treatment.*`;
+
+      myanmarReply = `### 🌿 ဝမ်းလျှောခြင်းနှင့် ဝမ်းပျက်ခြင်း
+**အကျဉ်းချုပ် ရှင်းလင်းချက်:**
+ဝမ်းလျှောခြင်းသည် အစာမသန့်ရှင်းမှု သို့မဟုတ် ပိုးဝင်ခြင်းကြောင့် ဖြစ်ပွားပြီး ခန္ဓာကိုယ်မှ ရေဓာတ်နှင့် သတ္တုဓာတ်များ လျင်မြန်စွာ ဆုံးရှုံးစေပါသည်။
+
+---
+
+#### ✅ စောင့်ထိန်း လိုက်နာရန်များ (Dos)
+* **ဓာတ်ဆားရည် (ORS) သောက်ပါ**: ဓာတ်ဆား ၁ ထုပ်ကို ရေကျက်အေး ၁ လီတာဖြင့် ဖျော်ပြီး ဝမ်းသွားတိုင်း တစ်ငုံချင်း မကြာခဏ သောက်သုံးပေးပါ။
+* **ဆန်ပြုတ်နွေးနွေး စားပါ**: ဆန်ပြုတ်၊ ငှက်ပျောသီးမှည့်ကဲ့သို့ အစာကြေလွယ်သော အစားအစာများကိုသာ စားသုံးပါ။
+* **လက်ကို သန့်ရှင်းစွာ ဆေးကြောပါ**: အစာမစားမီနှင့် အိမ်သာတက်ပြီးတိုင်း လက်ကို ဆပ်ပြာဖြင့် စင်ကြယ်စွာ ဆေးပါ။
+
+#### ❌ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)
+* **အချိုရည်နှင့် နို့ထွက်ပစ္စည်းများ ရှောင်ပါ**: သကြားပါသော အချိုရည်များနှင့် နို့သည် ဝမ်းသွားခြင်းကို ပိုမိုဆိုးရွားစေပါသည်။
+* **အစပ်၊ အဆီနှင့် အချဉ် ရှောင်ပါ**: ငရုတ်သီး၊ အဆီအစိမ့်နှင့် အချဉ်များကို လုံးဝရှောင်ကြဉ်ပါ။
+* **ဝမ်းပိတ်ဆေး မိမိသဘောဖြင့် မသောက်ရ**: ပိုးကြောင့်ဖြစ်သော ဝမ်းပျက်ခြင်းတွင် ဝမ်းပိတ်ဆေးသောက်ပါက ပိုးများ အူထဲကျန်နေတတ်ပါသည်။
+
+#### 🍵 အထောက်အကူပြု မြန်မာ့တိုင်းရင်းဆေး / အိမ်တွင်းကုထုံး (Remedies)
+*(အန္တရာယ်ကင်းပြီး ရေဓာတ်ဖြည့်တင်းပေးသော သဘာဝဆေးနည်းများ)*
+* **အုန်းရည်နုနု**: သဘာဝ အုန်းရည်နုနု သောက်ပေးခြင်းဖြင့် ဆုံးရှုံးသွားသော ပိုတက်စီယမ်နှင့် သတ္တုဓာတ်များကို ပြန်လည်ဖြည့်တင်းပေးပါသည်။
+* **ဆန်ပြုတ်ရည်ကျဲကျဲ ဆားအနည်းငယ်ခတ်**: ရေဓာတ်နှင့် အင်အားကို အမြန်ဆုံး ပြန်လည်ရရှိစေပါသည်။
+
+---
+
+> ⚠️ **အရေးပေါ် သတိပေးချက် (Red Flags):**
+> ဝမ်းထဲ သွေး သို့မဟုတ် ချွဲပါခြင်း၊ အဖျားကြီးခြင်း၊ မျက်တွင်းဟောက်ပက်ဖြစ်ပြီး ဆီးလုံးဝမသွားခြင်း (ရေဓာတ်ပြင်းထန်စွာ ခမ်းခြောက်ခြင်း) ဖြစ်ပါက ဆေးရုံသို့ ချက်ချင်း သွားရောက်ပါ။
+>
+> 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*`;
+    } else if (lower.includes('dizzy') || lower.includes('vertigo') || lower.includes('ခေါင်းမူး') || lower.includes('မူးဝေ')) {
+      reply = `### 🌿 Dizziness & Vertigo Care
+**Summary Explanation:**
+Dizziness and vertigo usually result from inner ear vestibular disturbances, dehydration, orthostatic hypotension, or cervical muscular tension.
+
+---
+
+#### ✅ Recommended Practices (Dos)
+* **Sit or Lie Down Immediately**: Sit down calmly to prevent balance loss, falls, and head trauma.
+* **Fix Gaze on a Stable Point**: Focus eyes on a motionless object across the room to stabilize vestibular balance.
+* **Slow Body Movements**: Stand up very slowly from lying or sitting positions.
+
+#### ❌ Things to Avoid (Don'ts)
+* **Avoid Sudden Head Turns**: Do not jerk the neck or rotate the head rapidly.
+* **Avoid Driving or Machinery**: Cease vehicle driving or operating heavy tools until completely stable.
+* **Avoid Dehydration**: Drink water regularly.
+
+#### 🍵 Supportive Home / Traditional Remedies
+*(Natural remedies to improve vestibular blood circulation)*
+* **Ginger Tea (ချင်းရေနွေးကြမ်း)**: Fresh ginger infusion effectively improves blood flow to the inner ear and vestibular centers, relieving both dizziness and associated nausea.
+
+---
+
+> ⚠️ **Emergency Warning (Red Flags):**
+> If dizziness is accompanied by facial asymmetry, limb numbness, difficulty speaking, or sudden double vision, treat as stroke alert and dial Ambulance 192 immediately.
+>
+> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or treatment.*`;
+
+      myanmarReply = `### 🌿 ခေါင်းမူးခြင်းနှင့် မူးဝေခြင်း
+**အကျဉ်းချုပ် ရှင်းလင်းချက်:**
+ခေါင်းမူးခြင်းသည် အတွင်းနား မျှခြေမညီခြင်း၊ ရေဓာတ်ခမ်းခြောက်ခြင်း၊ အိပ်ရေးပျက်ခြင်း သို့မဟုတ် သွေးပေါင်ကျခြင်းကြောင့် အဖြစ်များပါသည်။
+
+---
+
+#### ✅ စောင့်ထိန်း လိုက်နာရန်များ (Dos)
+* **ချက်ချင်း ထိုင်ပါ သို့မဟုတ် လှဲနေပါ**: ချော်လဲခြင်းနှင့် ထိခိုက်ဒဏ်ရာရခြင်း မဖြစ်စေရန် ချက်ချင်း ထိုင်ပါ (သို့) အိပ်ရာတွင် လှဲနေပါ။
+* **ငြိမ်သက်သော နေရာတစ်ခုကို စိုက်ကြည့်ပါ**: မျက်စိကို မလှုပ်ရှားသော အရာဝတ္ထုတစ်ခုပေါ် စိုက်ကြည့်ပေးခြင်းဖြင့် မျှခြေကို ထိန်းညှိပါ။
+* **ဖြည်းဖြည်းချင်း ထပါ**: အိပ်ရာမှထလျှင် ရုတ်တရက် မထဘဲ ခဏထိုင်ပြီးမှ ဖြည်းဖြည်းချင်း မတ်တပ်ရပ်ပါ။
+
+#### ❌ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)
+* **ခေါင်းကို ရုတ်တရက် လှည့်ခြင်း ရှောင်ပါ**: ခေါင်းနှင့် လည်ပင်းကို ရုတ်ခြည်း လှည့်ခြင်း မပြုရပါ။
+* **ကားမောင်းခြင်း ရှောင်ပါ**: မူးဝေနေချိန်တွင် ယာဉ်မောင်းခြင်းနှင့် စက်ယန္တရား ကိုင်တွယ်ခြင်း လုံးဝမပြုရပါ။
+* **ရေဆာခံခြင်း မပြုပါနှင့်**: ရေဓာတ်ခမ်းခြောက်ပါက ခေါင်းပိုမူးတတ်သဖြင့် ရေပုံမှန် သောက်ပါ။
+
+#### 🍵 အထောက်အကူပြု မြန်မာ့တိုင်းရင်းဆေး / အိမ်တွင်းကုထုံး (Remedies)
+*(အန္တရာယ်ကင်းပြီး အိမ်တွင် အလွယ်တကူ သုံးနိုင်သော ဆေးနည်း)*
+* **ချင်းရေနွေးကြမ်း (Ginger Tea)**: ချင်းအစို ပါးပါးလှီး ရေနွေးစိမ်၍ သောက်သုံးပါက ဦးနှောက်နှင့် နားအတွင်း သွေးလည်ပတ်မှုကို အားကောင်းစေပြီး ခေါင်းမူးခြင်းနှင့် ပျို့အန်ချင်ခြင်းကို အမြန် သက်သာစေပါသည်။
+
+---
+
+> ⚠️ **အရေးပေါ် သတိပေးချက် (Red Flags):**
+> ခေါင်းမူးခြင်းနှင့်အတူ မျက်နှာတစ်ခြမ်းရွဲ့ခြင်း၊ ခြေလက်မသယ်နိုင်ခြင်း၊ စကားဗလုံးဗထွေးဖြစ်ခြင်းတို့ တွဲပါက လေဖြတ်ခြင်းလက္ခဏာဖြစ်နိုင်သဖြင့် လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုပါ။
+>
+> 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*`;
     } else {
-      reply = `Home Health Guidance for "${effectiveMessage}":\n• Myanmar Traditional Herbs: Explore Zingiber officinale (ချင်း), Azadirachta indica (တမာ), Ocimum tenuiflorum (ပင်စိမ်း), and Curcuma longa (နနွင်း) for natural remedies.\n• Hydration & Rest: Maintain proper fluid intake and rest in a well-ventilated room.\n• Professional Referral: For severe, worsening, or persistent symptoms, consult a licensed healthcare practitioner or physician.`;
-      myanmarReply = `အိမ်တွင်းကုသရေး အကြံပေး လမ်းညွှန် (မေးမြန်းချက်: "${effectiveMessage}"):\n• သဘာဝ ဆေးနည်းများ: ချင်း (Ginger)၊ ပင်စိမ်း (Holy Basil)၊ နနွင်း (Turmeric) နှင့် တမာရွက် (Neem) တို့ကို အသုံးပြု၍ သဘာဝအတိုင်း ကျန်းမာရေး ထိန်းသိမ်းနိုင်ပါသည်။\n• အနားယူပါ: သန့်ရှင်းသော ရေကို လုံလောက်စွာ သောက်သုံးပြီး မျှတစွာ အနားယူပါ။\n• သတိပြုရန်: ဝေဒနာ ပြင်းထန်ပါက သို့မဟုတ် မသက်သာပါက ဆရာဝန် သို့မဟုတ် အသိအမှတ်ပြု တိုင်းရင်းဆေးဆရာနှင့် ပြသတိုင်ပင်ပါ။`;
+      reply = `### 🌿 Health Guidance for "${effectiveMessage}"
+**Summary Explanation:**
+Health symptoms often respond favorably to balanced rest, optimal hydration, supportive natural foods, and timely physician consultation.
+
+---
+
+#### ✅ Recommended Practices (Dos)
+* **Adequate Hydration & Rest**: Drink clean lukewarm water and maintain 7-8 hours of sound sleep.
+* **Balanced Nutrition**: Consume easily digestible, nutrient-dense home-cooked meals.
+* **Consult a Healthcare Professional**: Seek clinical evaluation if symptoms are severe or persistent.
+
+#### ❌ Things to Avoid (Don'ts)
+* **Avoid Excess Spices, Greasy & Salty Foods**: Minimize processed, heavy food intake.
+* **Avoid Self-Prescribed Medications**: Never use strong antibiotics or NSAIDs without a physician's prescription.
+* **Avoid Stress & Overexertion**: Rest physically and mentally.
+
+#### 🍵 Supportive Home / Traditional Remedies
+*(Gentle traditional remedies for wellness)*
+* **Warm Ginger or Basil Tea (ချင်း သို့မဟုတ် ပင်စိမ်းရေနွေးကြမ်း)**: Steep fresh ginger or holy basil leaves in hot water for a soothing natural health tonic.
+
+---
+
+> ⚠️ **Emergency Warning (Red Flags):**
+> If you experience severe chest pain, shortness of breath, loss of consciousness, or symptoms worsen rapidly, dial Ambulance 192 immediately.
+>
+> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or treatment.*`;
+
+      myanmarReply = `### 🌿 ကျန်းမာရေး လမ်းညွှန်ချက် (မေးမြန်းမှု: "${effectiveMessage}")
+**အကျဉ်းချုပ် ရှင်းလင်းချက်:**
+ကျန်းမာရေး ဝေဒနာများသည် လုံလောက်သော အနားယူမှု၊ သန့်ရှင်းသော နေထိုင်စားသောက်မှု၊ ရေဓာတ်ပြည့်ဝမှုနှင့် သဘာဝတိုင်းရင်းဆေးနည်းများဖြင့် သက်သာပျောက်ကင်းစေနိုင်ပါသည်။
+
+---
+
+#### ✅ စောင့်ထိန်း လိုက်နာရန်များ (Dos)
+* **လုံလောက်စွာ အနားယူပါ**: တစ်နေ့လျှင် အိပ်ရေးဝဝ အနားယူပြီး သန့်ရှင်းသော ရေနွေးနွေးကို လုံလောက်စွာ သောက်သုံးပါ။
+* **အာဟာရမျှတစွာ စားပါ**: အစာကြေလွယ်ပြီး အာဟာရပြည့်ဝသော လတ်ဆတ်သည့် အစားအစာများကို စားသုံးပါ။
+* **လက္ခဏာများကို စောင့်ကြည့်ပါ**: ဝေဒနာ မသက်သာပါက ဆရာဝန် သို့မဟုတ် ကျန်းမာရေးဝန်ထမ်းထံ သွားရောက်ပြသပါ။
+
+#### ❌ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)
+* **အစပ်၊ အဆီ၊ အငန် လွန်ကဲမှု ရှောင်ပါ**: အစာအိမ်နှင့် ခန္ဓာကိုယ်ကို ဝန်ပိစေသော အစားအစာများကို ရှောင်ကြဉ်ပါ။
+* **ဆေးဝါးများ မိမိသဘောဖြင့် မသောက်ပါနှင့်**: ဆရာဝန်ညွှန်ကြားချက်မပါဘဲ သောက်ဆေးများကို မသောက်သင့်ပါ။
+* **ပင်ပန်းလွန်ကဲသော လှုပ်ရှားမှုများ ရှောင်ပါ**: လေးလံသော အလုပ်များနှင့် အိပ်ရေးပျက်ခြင်းကို ရှောင်ကြဉ်ပါ။
+
+#### 🍵 အထောက်အကူပြု မြန်မာ့တိုင်းရင်းဆေး / အိမ်တွင်းကုထုံး (Remedies)
+*(အန္တရာယ်ကင်းပြီး အိမ်တွင် အလွယ်တကူ သုံးနိုင်သော သဘာဝဆေးနည်းများ)*
+* **ချင်းရေနွေးကြမ်း (သို့မဟုတ်) ပင်စိမ်းရေနွေးဖျော**: ချင်း သို့မဟုတ် ပင်စိမ်းရွက်ကို ရေနွေးစိမ်၍ သောက်သုံးခြင်းသည် ခန္ဓာကိုယ်သွေးလည်ပတ်မှုကို ကောင်းစေပြီး ရောဂါဝေဒနာများကို သက်သာစေပါသည်။
+
+---
+
+> ⚠️ **အရေးပေါ် သတိပေးချက် (Red Flags):**
+> ရင်ဘတ်အောင့်ခြင်း၊ အသက်ရှူကြပ်ခြင်း၊ သတိလစ်ခြင်း သို့မဟုတ် ဝေဒနာသည် ရက်ကြာသည်အထိ မသက်သာဘဲ ပိုမိုဆိုးရွားလာပါက ဆေးရုံ/ဆေးခန်းသို့ ချက်ချင်း သွားရောက်ပြသပါ။
+>
+> 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*`;
     }
 
     const finalAnswer = shouldReplyInMyanmar ? (myanmarReply || reply) : reply;
@@ -763,9 +1370,10 @@ async function processHealthAiQuery(userText: string, language: string = 'my'): 
   const hasMyanmarCharacters = /[\u1000-\u109F]/.test(effectiveMessage);
   const shouldReplyInMyanmar = language === 'my' || hasMyanmarCharacters;
 
-  const systemInstruction = `You are "အိမ်တွင်းကုသရေး အကြံပေး" (Home Health & Wellness Advisor), an expert AI Health Agent in Myanmar.
-Language: ${shouldReplyInMyanmar ? 'Myanmar script (မြန်မာဘာသာ)' : 'English'}.
-Keep responses helpful, safe, clear, concise for Telegram chat. Do NOT use markdown asterisks (*, **). Use bullet points (•).`;
+  const systemInstruction = shouldReplyInMyanmar 
+    ? `သင်သည် မြန်မာ့ရိုးရာ တိုင်းရင်းဆေးပညာ၊ အိမ်တွင်းကုထုံး (Home Remedies) နှင့် အခြေခံ ကျန်းမာရေးဆိုင်ရာ အသိပညာပေး လက်ထောက် AI Agent ဖြစ်သည်။
+စောင့်ထိန်း လိုက်နာရန်များ (Dos)၊ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)၊ မြန်မာ့တိုင်းရင်းဆေး/အိမ်တွင်းကုထုံးများနှင့် အရေးပေါ် သတိပေးချက်များကို သေချာစွာ ရှင်းပြပေးပါ။`
+    : `You are an AI Health Agent specializing in Myanmar Traditional Medicine, Home Remedies, and Primary Health Education. Provide safe, practical Dos, Don'ts, natural remedies, and emergency warnings.`;
 
   // 1. Try OpenRouter
   if (effectiveOpenRouterKey) {
@@ -800,12 +1408,13 @@ Keep responses helpful, safe, clear, concise for Telegram chat. Do NOT use markd
   }
 
   // 2. Try Gemini
-  const ai = getGeminiClient();
-  if (ai) {
+  const effectiveGeminiKey = process.env.GEMINI_API_KEY;
+  if (effectiveGeminiKey) {
     try {
-      const result = await generateWithGeminiResilient(ai, {
-        contents: effectiveMessage,
-        config: { systemInstruction, temperature: 0.3 }
+      const result = await generateWithGeminiRest(effectiveGeminiKey, {
+        contents: [{ parts: [{ text: effectiveMessage }] }],
+        systemInstruction,
+        temperature: 0.3
       });
       if (result.text) return cleanTextResponse(result.text);
     } catch (err) {
@@ -884,6 +1493,17 @@ async function startServer() {
   function tryListen(port: number) {
     const server = app.listen(port, '0.0.0.0', () => {
       console.log(`TMHIP Server running on http://0.0.0.0:${port}`);
+      if (port === 3000) {
+        import('http').then(({ createServer }) => {
+          const redirectServer = createServer((req, res) => {
+            const host = req.headers.host ? req.headers.host.replace(':3001', ':3000') : 'localhost:3000';
+            res.writeHead(302, { Location: `http://${host}${req.url}` });
+            res.end();
+          });
+          redirectServer.on('error', () => {});
+          redirectServer.listen(3001, '0.0.0.0');
+        }).catch(() => {});
+      }
     });
 
     server.on('error', (err: any) => {

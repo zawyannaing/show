@@ -6,12 +6,15 @@ import { EmergencyHotlines } from './components/EmergencyHotlines';
 import { AssistantSection } from './components/AssistantSection';
 
 import { SymptomsRemedies } from './components/SymptomsRemedies';
+import { HomeTreatmentsSection } from './components/homeTreatments';
 import { Footer } from './components/Footer';
 import { HerbMonographModal } from './components/HerbMonographModal';
 import { HerbCatalogModal } from './components/HerbCatalogModal';
-import { AiAssistantWidget } from './components/AiAssistantWidget';
 import { DynamicPostsFeed } from './components/DynamicPostsFeed';
 import { AdminPostUpload } from './components/AdminPostUpload';
+import { PwaInstallBanner } from './components/PwaInstallBanner';
+import { GlobalSearchModal } from './components/GlobalSearchModal';
+import { OfflinePackModal } from './components/OfflinePackModal';
 import { HERBS_DATA } from './data/herbs';
 import { PROTOCOLS_DATA } from './data/protocols';
 import { DEFAULT_CONSULTATION_HISTORY } from './data/consultationHistory';
@@ -22,6 +25,7 @@ import {
   getManagedSeniorTopics 
 } from './lib/contentManager';
 import { Herb, EmergencyProtocol, ActiveSection, ThemeMode, FontSize } from './types';
+import { useAuth } from './hooks/useAuth';
 
 export default function App() {
   // Theme state: 'light' | 'comfort' | 'dark' with localStorage persistence
@@ -55,8 +59,58 @@ export default function App() {
     return 'my';
   });
 
+  // Global Universal Spotlight Search Modal state
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isOfflinePackOpen, setIsOfflinePackOpen] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Active Section State (Switch Section Style navigation)
-  const [activeSection, setActiveSection] = useState<ActiveSection>('overview');
+  const [activeSection, setActiveSection] = useState<ActiveSection>(() => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash.replace('#', '') as ActiveSection;
+      if (['overview', 'remedies', 'home_treatments', 'plants', 'symptoms', 'hotlines', 'assistant', 'posts', 'admin'].includes(hash)) {
+        return hash;
+      }
+      const params = new URLSearchParams(window.location.search);
+      const sectionParam = params.get('section') as ActiveSection;
+      if (sectionParam && ['overview', 'remedies', 'home_treatments', 'plants', 'symptoms', 'hotlines', 'assistant', 'posts', 'admin'].includes(sectionParam)) {
+        return sectionParam;
+      }
+    }
+    return 'overview';
+  });
+
+  // Sync URL hash with active section
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace('#', '') as ActiveSection;
+      if (['overview', 'remedies', 'home_treatments', 'plants', 'symptoms', 'hotlines', 'assistant', 'posts', 'admin'].includes(hash)) {
+        setActiveSection(hash);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  // Verify Admin email privileges via useAuth
+  const { isAdmin, loading: authLoading } = useAuth();
+
+  // If unauthorized user/premium user somehow ends up on 'admin', redirect them immediately to home (only after auth check completes)
+  useEffect(() => {
+    if (!authLoading && activeSection === 'admin' && !isAdmin) {
+      setActiveSection('overview');
+    }
+  }, [activeSection, isAdmin, authLoading]);
 
   // Admin section subtab selection for direct navigation
   const [adminInitialTab, setAdminInitialTab] = useState<'post' | 'sections'>('post');
@@ -80,7 +134,6 @@ export default function App() {
   // Modals and detail states
   const [selectedHerb, setSelectedHerb] = useState<Herb | null>(null);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
-  const [isChatWidgetOpen, setIsChatWidgetOpen] = useState(false);
   const [herbFilterText, setHerbFilterText] = useState('');
 
   // Sync theme mode on root element
@@ -114,6 +167,9 @@ export default function App() {
 
   const handleSelectSection = (section: ActiveSection) => {
     setActiveSection(section);
+    if (typeof window !== 'undefined') {
+      window.location.hash = section;
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -201,6 +257,9 @@ export default function App() {
   const handleConsultAssistant = (prompt?: string) => {
     setAssistantInitialPrompt(prompt);
     setActiveSection('assistant');
+    if (typeof window !== 'undefined') {
+      window.location.hash = 'assistant';
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -214,6 +273,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-white dark:bg-black comfort:bg-[#faf6ee] text-black dark:text-white comfort:text-[#231f1a] antialiased selection:bg-black selection:text-white dark:selection:bg-white dark:selection:text-black transition-colors flex flex-col justify-between">
+      {/* PWA Mobile Install Banner (Android & iOS) */}
+      <PwaInstallBanner language={language} />
+
       {/* Top Header Navbar with Switch Section Tabs & Accessibility Controls (A- to A++, Theme, Lang) */}
       <Navbar
         themeMode={themeMode}
@@ -226,6 +288,8 @@ export default function App() {
         onSelectSection={handleSelectSection}
         onOpenCatalog={() => setIsCatalogOpen(true)}
         onOpenChat={() => handleConsultAssistant()}
+        onOpenSearch={() => setIsSearchOpen(true)}
+        onOpenOfflinePack={() => setIsOfflinePackOpen(true)}
       />
 
       {/* Main Content Area: Renders according to active section (Switch Section Style) */}
@@ -247,9 +311,19 @@ export default function App() {
           <div className="animate-in fade-in duration-200">
             <SymptomsRemedies
               language={language}
-              onConsultAdvisor={(prompt: string) => {
-                handleConsultAssistant(prompt);
-              }}
+              onConsultAdvisor={(prompt: string) => handleConsultAssistant(prompt)}
+            />
+          </div>
+        )}
+
+
+        {/* VIEW: Home Acupressure Treatments (အိမ်တွင်း လက်နှိပ်ကုထုံးများ) */}
+        {activeSection === 'home_treatments' && (
+          <div className="animate-in fade-in duration-200">
+            <HomeTreatmentsSection 
+              language={language} 
+              themeMode={themeMode}
+              onChangeThemeMode={setThemeMode}
             />
           </div>
         )}
@@ -263,7 +337,7 @@ export default function App() {
               onOpenCatalog={() => setIsCatalogOpen(true)}
               language={language}
               filterText={herbFilterText}
-              onManageSection={() => handleOpenAdminSection('plants')}
+              onManageSection={isAdmin ? () => handleOpenAdminSection('plants') : undefined}
             />
           </div>
         )}
@@ -275,7 +349,7 @@ export default function App() {
               protocols={currentProtocols}
               language={language}
               onSelectProtocol={handleSelectProtocol}
-              onManageSection={() => handleOpenAdminSection('firstaid')}
+              onManageSection={isAdmin ? () => handleOpenAdminSection('firstaid') : undefined}
             />
           </div>
         )}
@@ -285,7 +359,7 @@ export default function App() {
           <div className="animate-in fade-in duration-200">
             <EmergencyHotlines 
               language={language} 
-              onManageSection={() => handleOpenAdminSection('hotlines')}
+              onManageSection={isAdmin ? () => handleOpenAdminSection('hotlines') : undefined}
             />
           </div>
         )}
@@ -301,8 +375,8 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 7: Admin Post Upload (Supabase Storage & Table Insert) */}
-        {activeSection === 'admin' && (
+        {/* VIEW 7: Admin Post Upload (Supabase Storage & Table Insert - Strictly Admin Only) */}
+        {activeSection === 'admin' && isAdmin && (
           <div className="animate-in fade-in duration-200">
             <AdminPostUpload 
               language={language} 
@@ -316,16 +390,6 @@ export default function App() {
 
       {/* Footer */}
       <Footer language={language} />
-
-      {/* Floating AI Clinical Assistant (visible on other sections for quick consults) */}
-      {activeSection !== 'assistant' && (
-        <AiAssistantWidget
-          isOpen={isChatWidgetOpen}
-          onToggle={() => setIsChatWidgetOpen((prev) => !prev)}
-          language={language}
-          onOpenFullAssistant={handleConsultAssistant}
-        />
-      )}
 
       {/* Herb Monograph Detail Modal */}
       <HerbMonographModal
@@ -343,6 +407,25 @@ export default function App() {
           setIsCatalogOpen(false);
           setSelectedHerb(herb);
         }}
+        language={language}
+      />
+
+      {/* Universal Spotlight Search Modal (Cmd+K / Search button) */}
+      <GlobalSearchModal
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        language={language}
+        onNavigateSection={handleSelectSection}
+        onSelectHerb={(herb) => {
+          setSelectedHerb(herb);
+        }}
+        onSelectProtocol={handleSelectProtocol}
+      />
+
+      {/* Offline Medical Pack Modal */}
+      <OfflinePackModal
+        isOpen={isOfflinePackOpen}
+        onClose={() => setIsOfflinePackOpen(false)}
         language={language}
       />
     </div>

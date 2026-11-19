@@ -24,13 +24,23 @@ import {
   Crown,
   AlertCircle,
   User,
-  X
+  X,
+  MessageSquare,
+  Heart,
+  Volume2,
+  VolumeX,
+  Copy,
+  BookOpen,
+  Type
 } from 'lucide-react';
 import { supabase, Post } from '../lib/supabaseClient';
 import { EditPostModal } from './EditPostModal';
 import { GoogleAuthModal } from './GoogleAuthModal';
+import { PostCommentsSection } from './PostCommentsSection';
 import { useAuth } from '../hooks/useAuth';
 import { INITIAL_BULLETINS, getPostCategory, cleanPostTitle } from '../data/initialBulletins';
+import { formatFacebookDate, getDateDayStatus } from '../utils/dateFormatter';
+import { getLocalBookmarks, toggleBookmark, BookmarkItem } from '../lib/userCloudSync';
 
 interface DynamicPostsFeedProps {
   language: 'en' | 'my';
@@ -54,6 +64,95 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
   const [confirmDeletePost, setConfirmDeletePost] = useState<Post | null>(null);
+
+  // Enhanced Reader Experience States
+  const [readerFontSize, setReaderFontSize] = useState<'normal' | 'large' | 'xl'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('showcare_reader_font_size') as any) || 'large';
+    }
+    return 'large';
+  });
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [isCopiedContent, setIsCopiedContent] = useState(false);
+  const [bookmarkedPostIds, setBookmarkedPostIds] = useState<Set<string>>(() => {
+    const list = getLocalBookmarks();
+    return new Set(list.filter(b => b.itemType === 'post').map(b => b.itemId));
+  });
+
+  const handleFontSizeChange = (size: 'normal' | 'large' | 'xl') => {
+    setReaderFontSize(size);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('showcare_reader_font_size', size);
+    }
+  };
+
+  useEffect(() => {
+    const handleBookmarksChanged = (e: any) => {
+      const list: BookmarkItem[] = e.detail || getLocalBookmarks();
+      setBookmarkedPostIds(new Set(list.filter(b => b.itemType === 'post').map(b => b.itemId)));
+    };
+    window.addEventListener('showcare_bookmarks_changed', handleBookmarksChanged);
+    return () => window.removeEventListener('showcare_bookmarks_changed', handleBookmarksChanged);
+  }, []);
+
+  // Stop audio on modal close or unmount
+  useEffect(() => {
+    if (!selectedPost && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      setIsPlayingAudio(false);
+    }
+  }, [selectedPost]);
+
+  const handleToggleAudio = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window) || !selectedPost) return;
+    if (isPlayingAudio) {
+      window.speechSynthesis.cancel();
+      setIsPlayingAudio(false);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const textToRead = `${cleanPostTitle(selectedPost.title)}. ${selectedPost.content}`;
+    const utterance = new SpeechSynthesisUtterance(textToRead);
+    utterance.rate = 0.92;
+    utterance.onend = () => setIsPlayingAudio(false);
+    utterance.onerror = () => setIsPlayingAudio(false);
+    window.speechSynthesis.speak(utterance);
+    setIsPlayingAudio(true);
+  };
+
+  const handleToggleBookmark = async (post: Post, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const { isBookmarked } = await toggleBookmark(user?.id, {
+      itemType: 'post',
+      itemId: post.id,
+      title: cleanPostTitle(post.title),
+      titleMy: cleanPostTitle(post.title),
+      subtitle: post.content.substring(0, 120),
+      category: getPostCategory(post)
+    });
+    setBookmarkedPostIds(prev => {
+      const next = new Set(prev);
+      if (isBookmarked) next.add(post.id);
+      else next.delete(post.id);
+      return next;
+    });
+  };
+
+  const calculateReadingTime = (text: string, lang: 'en' | 'my') => {
+    const clean = text.trim();
+    if (!clean) return lang === 'my' ? '၁ မိနစ်' : '1 min';
+    const minutes = Math.max(1, Math.ceil(clean.length / 320));
+    return lang === 'my' ? `${minutes} မိနစ်ဖတ်ရန်` : `${minutes} min read`;
+  };
+
+  const handleCopyFullPost = (post: Post) => {
+    const text = `【${cleanPostTitle(post.title)}】\n\n${post.content}\n\n— ShowCare ကျန်းမာရေးနှင့် သဘာဝကုထုံး`;
+    navigator.clipboard.writeText(text).then(() => {
+      setIsCopiedContent(true);
+      setTimeout(() => setIsCopiedContent(false), 2000);
+    });
+  };
 
   const fetchPosts = async (isSilent = false) => {
     if (!isSilent) setLoading(true);
@@ -172,18 +271,38 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
     return { all: posts.length, live, daily };
   }, [posts]);
 
-  // Featured Today's Daily Bulletin (first daily post found, or fallback)
+  // Featured Daily Bulletin (first daily post found, or fallback)
   const todayBulletin = useMemo(() => {
     return posts.find(p => getPostCategory(p) === 'daily') || posts[0];
   }, [posts]);
 
-  // Today's formatted date
+  // Day status (today/yesterday) and FB-style date formatting for featured bulletin
+  const bulletinDayStatus = useMemo(() => {
+    return getDateDayStatus(todayBulletin?.created_at);
+  }, [todayBulletin]);
+
+  const bulletinDateFormatted = useMemo(() => {
+    if (!todayBulletin?.created_at) return '';
+    return formatFacebookDate(todayBulletin.created_at, language);
+  }, [todayBulletin, language]);
+
+  const bulletinBadgeLabel = useMemo(() => {
+    if (bulletinDayStatus.isToday) {
+      return language === 'my' ? 'ယနေ့ နေ့စဉ်သတင်းလွှာ' : "Today's Daily Bulletin";
+    }
+    if (bulletinDayStatus.isYesterday) {
+      return language === 'my' ? 'မနေ့က နေ့စဉ်သတင်းလွှာ' : "Yesterday's Daily Bulletin";
+    }
+    return language === 'my' ? 'နေ့စဉ်သတင်းလွှာ' : 'Daily Bulletin';
+  }, [bulletinDayStatus, language]);
+
+  // Formatted date for header live status
   const todayDateStr = useMemo(() => {
     const d = new Date();
     if (language === 'my') {
       const months = ['ဇန်နဝါရီ', 'ဖေဖော်ဝါရီ', 'မတ်', 'ဧပြီ', 'မေ', 'ဇွန်', 'ဇူလိုင်', 'ဩဂုတ်', 'စက်တင်ဘာ', 'အောက်တိုဘာ', 'နိုဝင်ဘာ', 'ဒီဇင်ဘာ'];
       const days = ['တနင်္ဂနွေ', 'တနင်္လာ', 'အင်္ဂါ', 'ဗုဒ္ဓဟူး', 'ကြာသပတေး', 'သောကြာ', 'စနေ'];
-      return `${months[d.getMonth()]} ${d.getDate()} ရက်၊ ၂၀၂၆ (${days[d.getDay()]}နေ့)`;
+      return `${months[d.getMonth()]} ${d.getDate()} ရက်၊ ${d.getFullYear()} (${days[d.getDay()]}နေ့)`;
     }
     return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
   }, [language]);
@@ -198,9 +317,16 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
               <span>{language === 'my' ? 'တိုက်ရိုက်လွှင့်တင် ချိတ်ဆက်ထားသည်' : 'Live Community Network'}</span>
             </span>
-            <span className="text-xs text-neutral-400 font-mono hidden sm:inline">
-              {todayDateStr}
-            </span>
+            {posts[0]?.created_at ? (
+              <span className="text-xs text-neutral-400 font-mono hidden sm:inline flex items-center gap-1">
+                <Clock className="w-3 h-3 text-neutral-400 inline" />
+                <span>{language === 'my' ? 'နောက်ဆုံးတင်ချိန်: ' : 'Latest: '}{formatFacebookDate(posts[0].created_at, language)}</span>
+              </span>
+            ) : (
+              <span className="text-xs text-neutral-400 font-mono hidden sm:inline">
+                {todayDateStr}
+              </span>
+            )}
           </div>
 
           <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black text-black dark:text-white comfort:text-[#231f1a] font-myanmar tracking-tight leading-tight">
@@ -267,10 +393,11 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
               <div className="flex flex-wrap items-center gap-2 mb-2.5">
                 <span className="px-3 py-1 rounded-full bg-amber-500 text-white text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-xs">
                   <Calendar className="w-3 h-3" />
-                  <span>{language === 'my' ? 'ယနေ့ နေ့စဉ်သတင်းလွှာ' : "Today's Daily Bulletin"}</span>
+                  <span>{bulletinBadgeLabel}</span>
                 </span>
-                <span className="text-xs font-semibold text-amber-900 dark:text-amber-300 comfort:text-amber-950 font-myanmar">
-                  {todayDateStr}
+                <span className="text-xs font-semibold text-amber-900 dark:text-amber-300 comfort:text-amber-950 font-myanmar flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 opacity-80" />
+                  <span>{bulletinDateFormatted}</span>
                 </span>
                 <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full">
                   <ShieldCheck className="w-3.5 h-3.5" />
@@ -416,11 +543,7 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
             const category = getPostCategory(post);
             const isDaily = category === 'daily';
             const cleanTitle = cleanPostTitle(post.title);
-            const dateStr = new Date(post.created_at).toLocaleDateString('en-US', {
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric'
-            });
+            const dateStr = formatFacebookDate(post.created_at, language);
 
             return (
               <article
@@ -547,6 +670,32 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
                       </>
                     )}
 
+                    {/* Bookmark Heart Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleToggleBookmark(post, e)}
+                      className="p-1.5 rounded-lg text-neutral-400 hover:text-rose-500 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+                      title={bookmarkedPostIds.has(post.id) ? (language === 'my' ? 'သိမ်းထားခြင်းမှ ဖယ်ရှားမည်' : 'Remove Bookmark') : (language === 'my' ? 'ပို့စ် သိမ်းဆည်းမည်' : 'Bookmark Post')}
+                    >
+                      <Heart
+                        className={`w-4 h-4 transition-all ${
+                          bookmarkedPostIds.has(post.id)
+                            ? 'text-rose-500 fill-rose-500 scale-110'
+                            : ''
+                        }`}
+                      />
+                    </button>
+
+                    {/* Comments Button */}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPost(post)}
+                      className="p-1.5 rounded-lg text-neutral-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+                      title={language === 'my' ? 'မှတ်ချက် ရေးသား/ဖတ်ရှုရန်' : 'View / Add Comments'}
+                    >
+                      <MessageSquare className="w-4 h-4" />
+                    </button>
+
                     {/* Share Button */}
                     <button
                       type="button"
@@ -592,26 +741,168 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
               </div>
             )}
 
-            <div className="p-6 sm:p-8 overflow-y-auto flex-1">
-              <div className="flex items-center justify-between text-xs text-neutral-400 mb-3">
-                <span className="font-mono flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>{new Date(selectedPost.created_at).toLocaleString()}</span>
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold font-myanmar">
-                  {getPostCategory(selectedPost) === 'daily'
-                    ? (language === 'my' ? '📅 နေ့စဉ်သတင်းလွှာ' : '📅 Daily Bulletin')
-                    : (language === 'my' ? '🔴 တိုက်ရိုက်ပို့စ်' : '🔴 Live Post')}
-                </span>
+            <div className="p-5 sm:p-8 overflow-y-auto flex-1">
+              {/* Reader Top Meta Bar & Controls */}
+              <div className="flex flex-wrap items-center justify-between gap-2.5 text-xs text-neutral-500 dark:text-neutral-400 mb-4 pb-3 border-b border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1]">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono flex items-center gap-1.5 text-[11px]">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>{formatFacebookDate(selectedPost.created_at, language)}</span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold font-myanmar">
+                    {getPostCategory(selectedPost) === 'daily'
+                      ? (language === 'my' ? '📅 နေ့စဉ်သတင်းလွှာ' : '📅 Daily Bulletin')
+                      : (language === 'my' ? '🔴 တိုက်ရိုက်ပို့စ်' : '🔴 Live Post')}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#ede5d4] text-neutral-600 dark:text-neutral-300 text-[10px] font-mono flex items-center gap-1">
+                    <BookOpen className="w-3 h-3 text-emerald-500" />
+                    <span>{calculateReadingTime(selectedPost.content, language)}</span>
+                  </span>
+                </div>
+
+                {/* Reading Toolbar: TTS Listen + Bookmark + Copy + Font Resizer */}
+                <div className="flex items-center gap-1.5 ml-auto">
+                  {/* TTS Listen Button */}
+                  <button
+                    type="button"
+                    onClick={handleToggleAudio}
+                    className={`px-2.5 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                      isPlayingAudio
+                        ? 'bg-emerald-600 text-white animate-pulse'
+                        : 'bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#ede5d4] text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700'
+                    }`}
+                    title={isPlayingAudio ? 'အသံ ရပ်မည်' : 'အသံဖြင့် နားဆင်မည်'}
+                  >
+                    {isPlayingAudio ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                    <span className="hidden sm:inline">
+                      {isPlayingAudio ? (language === 'my' ? 'ရပ်မည်' : 'Stop') : (language === 'my' ? 'နားဆင်မည်' : 'Listen')}
+                    </span>
+                  </button>
+
+                  {/* Bookmark Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => handleToggleBookmark(selectedPost, e)}
+                    className={`p-1.5 rounded-xl border transition cursor-pointer flex items-center justify-center ${
+                      bookmarkedPostIds.has(selectedPost.id)
+                        ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 text-rose-500'
+                        : 'bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#ede5d4] border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-rose-500'
+                    }`}
+                    title={bookmarkedPostIds.has(selectedPost.id) ? (language === 'my' ? 'သိမ်းထားသည်' : 'Bookmarked') : (language === 'my' ? 'ဆောင်းပါး သိမ်းဆည်းမည်' : 'Bookmark post')}
+                  >
+                    <Heart className={`w-3.5 h-3.5 ${bookmarkedPostIds.has(selectedPost.id) ? 'fill-rose-500 text-rose-500' : ''}`} />
+                  </button>
+
+                  {/* Copy Article Text */}
+                  <button
+                    type="button"
+                    onClick={() => handleCopyFullPost(selectedPost)}
+                    className="p-1.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#ede5d4] border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:text-emerald-600 transition cursor-pointer"
+                    title={language === 'my' ? 'စာသား ကူးယူမည်' : 'Copy Article Text'}
+                  >
+                    {isCopiedContent ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+
+                  {/* Font Size Switcher */}
+                  <div className="flex items-center gap-0.5 bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#ede5d4] p-0.5 rounded-xl border border-neutral-200/80 dark:border-neutral-700">
+                    <button
+                      type="button"
+                      onClick={() => handleFontSizeChange('normal')}
+                      className={`px-2 py-0.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        readerFontSize === 'normal'
+                          ? 'bg-white dark:bg-neutral-700 text-emerald-600 dark:text-emerald-400 shadow-2xs font-black'
+                          : 'text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200'
+                      }`}
+                      title="Normal font size"
+                    >
+                      A
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleFontSizeChange('large')}
+                      className={`px-2 py-0.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        readerFontSize === 'large'
+                          ? 'bg-white dark:bg-neutral-700 text-emerald-600 dark:text-emerald-400 shadow-2xs font-black'
+                          : 'text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200'
+                      }`}
+                      title="Large font size (Recommended)"
+                    >
+                      A+
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleFontSizeChange('xl')}
+                      className={`px-2 py-0.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        readerFontSize === 'xl'
+                          ? 'bg-white dark:bg-neutral-700 text-emerald-600 dark:text-emerald-400 shadow-2xs font-black'
+                          : 'text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200'
+                      }`}
+                      title="Extra Large font size"
+                    >
+                      A++
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <h2 className="text-xl sm:text-2xl font-black text-black dark:text-white comfort:text-[#231f1a] font-myanmar mb-4 leading-snug">
                 {cleanPostTitle(selectedPost.title)}
               </h2>
 
-              <div className="text-xs sm:text-sm text-neutral-700 dark:text-neutral-300 comfort:text-[#383027] font-myanmar leading-relaxed whitespace-pre-line space-y-3 mb-6">
-                {selectedPost.content}
+              {/* Enhanced Formatted Content Body */}
+              <div
+                className={`space-y-4 font-myanmar text-neutral-800 dark:text-neutral-200 comfort:text-[#2d251d] mb-6 ${
+                  readerFontSize === 'normal'
+                    ? 'text-[15px] sm:text-base leading-[1.9]'
+                    : readerFontSize === 'large'
+                    ? 'text-[17px] sm:text-lg leading-[2.05]'
+                    : 'text-[19px] sm:text-xl leading-[2.2]'
+                }`}
+              >
+                {selectedPost.content.split(/\n+/).filter(Boolean).map((para, idx) => {
+                  const trimmed = para.trim();
+                  // Bullet / Checklist Item
+                  if (
+                    trimmed.startsWith('•') ||
+                    trimmed.startsWith('-') ||
+                    trimmed.startsWith('*') ||
+                    /^[၀-၉0-9]+[။.]/.test(trimmed)
+                  ) {
+                    const cleanText = trimmed.replace(/^([•\-*]|[၀-၉0-9]+[။.])\s*/, '');
+                    return (
+                      <div key={idx} className="flex items-start gap-2.5 pl-2 py-0.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 mt-2 shrink-0" />
+                        <span className="flex-1 font-medium leading-relaxed">{cleanText}</span>
+                      </div>
+                    );
+                  }
+                  // Precaution / Warning Callout Box
+                  if (
+                    trimmed.includes('သတိပြုရန်') ||
+                    trimmed.toLowerCase().includes('precaution') ||
+                    trimmed.toLowerCase().includes('warning')
+                  ) {
+                    return (
+                      <div
+                        key={idx}
+                        className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-900 dark:text-amber-200 flex items-start gap-2.5 my-2"
+                      >
+                        <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                        <span className="font-semibold leading-relaxed">{trimmed}</span>
+                      </div>
+                    );
+                  }
+                  // Normal Paragraph
+                  return (
+                    <p key={idx} className="leading-relaxed tracking-normal font-normal">
+                      {trimmed}
+                    </p>
+                  );
+                })}
               </div>
+
+              {/* Community Comments & Q&A Discussion */}
+              <PostCommentsSection postId={selectedPost.id} language={language} />
 
               {/* Action Bar inside detail */}
               <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1]">
@@ -674,7 +965,10 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
         isOpen={!!editingPostId}
         onClose={() => setEditingPostId(null)}
         onUpdated={(updatedPost) => {
-          setPosts((prev) => prev.map((p) => (p.id === updatedPost.id ? updatedPost : p)));
+          setPosts((prev) => {
+            const mapped = prev.map((p) => (p.id === updatedPost.id ? updatedPost : p));
+            return [...mapped].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+          });
           if (selectedPost?.id === updatedPost.id) {
             setSelectedPost(updatedPost);
           }

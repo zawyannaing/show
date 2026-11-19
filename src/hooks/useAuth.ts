@@ -31,9 +31,29 @@ export interface UseAuthReturn {
 
 // Fallback admin emails if env variable is not populated
 const DEFAULT_ADMIN_EMAILS = [
+  'admin',
+  'admin@local.host',
   'wayh1360@gmail.com',
   'zawyannaing.yanrx4@gmail.com',
 ];
+
+export function getStoredLocalAdmin(): User | null {
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem('hek_local_admin');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      localStorage.removeItem('hek_local_admin');
+    }
+  }
+  return null;
+}
+
+export function notifyAuthChanged() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('tmhip_auth_changed'));
+  }
+}
 
 /**
  * Returns the parsed list of authorized administrator emails from VITE_ADMIN_EMAILS.
@@ -62,8 +82,10 @@ export function getAdminEmails(): string[] {
  */
 export function isEmailAdmin(email?: string | null): boolean {
   if (!email) return false;
+  const trimmed = email.trim().toLowerCase();
+  if (trimmed === 'admin' || trimmed === 'admin@local.host') return true;
   const adminList = getAdminEmails();
-  return adminList.includes(email.trim().toLowerCase());
+  return adminList.includes(trimmed);
 }
 
 /**
@@ -72,14 +94,14 @@ export function isEmailAdmin(email?: string | null): boolean {
 export function extractUserInfo(user: User | null): AuthUserInfo | null {
   if (!user) return null;
   const email = user.email || '';
-  const isAdmin = isEmailAdmin(email);
+  const isAdmin = user.id === 'local-admin-001' || isEmailAdmin(email);
 
   const name =
     user.user_metadata?.full_name ||
     user.user_metadata?.name ||
     user.user_metadata?.user_name ||
     email.split('@')[0] ||
-    'Google User';
+    'User';
 
   const avatarUrl =
     user.user_metadata?.avatar_url ||
@@ -98,18 +120,26 @@ export function extractUserInfo(user: User | null): AuthUserInfo | null {
 
 // Global cached session state to prevent flash of unauthenticated UI
 let globalSession: Session | null = null;
-let globalUser: User | null = null;
+let globalUser: User | null = getStoredLocalAdmin();
 
-// Eagerly check existing session
-supabase.auth.getSession().then(({ data: { session } }) => {
-  globalSession = session;
-  globalUser = session?.user ?? null;
-});
+// Eagerly check existing session if not local admin
+if (!globalUser) {
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    if (!getStoredLocalAdmin()) {
+      globalSession = session;
+      globalUser = session?.user ?? null;
+      notifyAuthChanged();
+    }
+  });
+}
 
 // Real-time listener
 supabase.auth.onAuthStateChange((_event, session) => {
-  globalSession = session;
-  globalUser = session?.user ?? null;
+  if (!getStoredLocalAdmin()) {
+    globalSession = session;
+    globalUser = session?.user ?? null;
+    notifyAuthChanged();
+  }
 });
 
 /**
@@ -120,21 +150,35 @@ supabase.auth.onAuthStateChange((_event, session) => {
  * and email verification against the VITE_ADMIN_EMAILS list for role-based access.
  */
 export function useAuth(): UseAuthReturn {
-  const [user, setUser] = useState<User | null>(globalUser);
+  const [user, setUser] = useState<User | null>(() => getStoredLocalAdmin() || globalUser);
   const [session, setSession] = useState<Session | null>(globalSession);
-  const [loading, setLoading] = useState<boolean>(!globalSession && !globalUser);
+  const [loading, setLoading] = useState<boolean>(!getStoredLocalAdmin() && !globalSession && !globalUser);
   const [error, setError] = useState<string | null>(null);
 
   const refreshSession = useCallback(async () => {
+    const localAdmin = getStoredLocalAdmin();
+    if (localAdmin) {
+      globalUser = localAdmin;
+      setUser(localAdmin);
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data, error: sessionError } = await supabase.auth.getSession();
       if (sessionError) {
         setError(sessionError.message);
       } else {
-        globalSession = data.session;
-        globalUser = data.session?.user ?? null;
-        setSession(data.session);
-        setUser(data.session?.user ?? null);
+        const currentLocal = getStoredLocalAdmin();
+        if (currentLocal) {
+          globalUser = currentLocal;
+          setUser(currentLocal);
+        } else {
+          globalSession = data.session;
+          globalUser = data.session?.user ?? null;
+          setSession(data.session);
+          setUser(data.session?.user ?? null);
+        }
         setError(null);
       }
     } catch (err: any) {
@@ -155,6 +199,13 @@ export function useAuth(): UseAuthReturn {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, newSession) => {
       if (!isMounted) return;
+      const localAdmin = getStoredLocalAdmin();
+      if (localAdmin) {
+        globalUser = localAdmin;
+        setUser(localAdmin);
+        setLoading(false);
+        return;
+      }
       globalSession = newSession;
       globalUser = newSession?.user ?? null;
       setSession(newSession);
@@ -163,9 +214,36 @@ export function useAuth(): UseAuthReturn {
       setError(null);
     });
 
+    // Listen for cross-component custom auth event and localStorage changes
+    const handleAuthEvent = () => {
+      if (!isMounted) return;
+      const localAdmin = getStoredLocalAdmin();
+      if (localAdmin) {
+        globalUser = localAdmin;
+        setUser(localAdmin);
+        setLoading(false);
+      } else {
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (!isMounted) return;
+          if (!getStoredLocalAdmin()) {
+            globalSession = session;
+            globalUser = session?.user ?? null;
+            setSession(session);
+            setUser(session?.user ?? null);
+            setLoading(false);
+          }
+        });
+      }
+    };
+
+    window.addEventListener('tmhip_auth_changed', handleAuthEvent);
+    window.addEventListener('storage', handleAuthEvent);
+
     return () => {
       isMounted = false;
       subscription.unsubscribe();
+      window.removeEventListener('tmhip_auth_changed', handleAuthEvent);
+      window.removeEventListener('storage', handleAuthEvent);
     };
   }, [refreshSession]);
 
@@ -197,6 +275,7 @@ export function useAuth(): UseAuthReturn {
       if (typeof window !== 'undefined') {
         localStorage.setItem('hek_local_admin', JSON.stringify(mockAdminUser));
       }
+      notifyAuthChanged();
       return { error: null };
     }
 
@@ -214,6 +293,7 @@ export function useAuth(): UseAuthReturn {
       if (typeof window !== 'undefined') {
         localStorage.removeItem('hek_local_admin');
       }
+      notifyAuthChanged();
       return { error: null };
     } catch (err: any) {
       const msg = err?.message || 'Sign in failed';
@@ -297,14 +377,17 @@ export function useAuth(): UseAuthReturn {
 
       if (signOutError) {
         setError(signOutError.message);
+        notifyAuthChanged();
         return { error: signOutError.message };
       }
+      notifyAuthChanged();
       return { error: null };
     } catch (err: any) {
       globalSession = null;
       globalUser = null;
       setUser(null);
       setSession(null);
+      notifyAuthChanged();
       const msg = err?.message || 'Failed to sign out';
       setError(msg);
       return { error: msg };
@@ -314,7 +397,11 @@ export function useAuth(): UseAuthReturn {
   // Compute Admin status by checking user's email in VITE_ADMIN_EMAILS
   const adminEmails = useMemo(() => getAdminEmails(), []);
   const userEmail = user?.email || null;
-  const isAdmin = useMemo(() => isEmailAdmin(userEmail), [userEmail]);
+  const isAdmin = useMemo(() => {
+    if (!user) return false;
+    if (user.id === 'local-admin-001') return true;
+    return isEmailAdmin(user.email);
+  }, [user]);
   const userInfo = useMemo(() => extractUserInfo(user), [user]);
 
   return {

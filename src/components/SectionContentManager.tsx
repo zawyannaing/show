@@ -18,10 +18,15 @@ import {
   ShieldCheck,
   Eye,
   EyeOff,
-  Settings
+  Settings,
+  UploadCloud,
+  Loader2,
+  Link as LinkIcon,
+  Image as ImageIcon
 } from 'lucide-react';
 import { Herb, EmergencyProtocol, EmergencyHotline, CustomSymptomRemedy } from '../types';
 import { supabase } from '../lib/supabaseClient';
+import { compressImage, formatBytes } from '../utils/imageCompressor';
 import {
   getManagedHerbs,
   saveManagedHerbs,
@@ -100,6 +105,63 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
   // Editing states
   const [editingHerb, setEditingHerb] = useState<Herb | null>(null);
   const [isNewHerb, setIsNewHerb] = useState(false);
+  const [herbImageSource, setHerbImageSource] = useState<'upload' | 'url'>('upload');
+  const [herbUploading, setHerbUploading] = useState(false);
+  const [herbCompressionInfo, setHerbCompressionInfo] = useState<{
+    originalSize: string;
+    compressedSize: string;
+    savingsPercent: number;
+    dimensions: string;
+  } | null>(null);
+
+  const handleHerbImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingHerb) return;
+
+    if (!file.type.startsWith('image/')) {
+      alert(language === 'my' ? 'ကျေးဇူးပြု၍ ဓာတ်ပုံဖိုင်သာ ရွေးချယ်ပါ' : 'Please select a valid image file');
+      return;
+    }
+
+    setHerbUploading(true);
+    try {
+      // 1. Auto-compress with WebP format and max 1200px
+      const result = await compressImage(file, { maxDimension: 1200, quality: 0.82 });
+      setHerbCompressionInfo({
+        originalSize: formatBytes(result.originalSize),
+        compressedSize: formatBytes(result.compressedSize),
+        savingsPercent: result.savingsPercent,
+        dimensions: `${result.dimensions.width}×${result.dimensions.height}px`
+      });
+
+      // 2. Upload to Supabase Storage bucket 'uploads' under 'plants/'
+      const fileExt = result.format === 'webp' ? 'webp' : 'jpg';
+      const cleanFileName = `plant-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+      const filePath = `plants/${cleanFileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('uploads')
+        .upload(filePath, result.file, {
+          cacheControl: '31536000',
+          contentType: result.file.type || 'image/webp',
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.warn('Storage upload error, using local base64 preview/fallback:', uploadError.message);
+        // Fallback: convert to base64 data url so plant image displays immediately
+        setEditingHerb(prev => prev ? { ...prev, imageUrl: result.previewUrl } : null);
+      } else {
+        const { data: urlData } = supabase.storage.from('uploads').getPublicUrl(filePath);
+        setEditingHerb(prev => prev ? { ...prev, imageUrl: urlData.publicUrl } : null);
+      }
+    } catch (err: any) {
+      console.error('Failed to compress/upload herb image:', err);
+      alert(language === 'my' ? 'ပုံတင်ရာတွင် အမှားအယွင်းရှိပါသည်' : 'Failed to upload image');
+    } finally {
+      setHerbUploading(false);
+    }
+  };
 
   const [editingSymptom, setEditingSymptom] = useState<CustomSymptomRemedy | null>(null);
   const [isNewSymptom, setIsNewSymptom] = useState(false);
@@ -536,32 +598,160 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold mb-1">{language === 'my' ? 'ကဏ္ဍ (Category)' : 'Category'}</label>
-                  <select
-                    value={editingHerb.category}
-                    onChange={e => setEditingHerb({ ...editingHerb, category: e.target.value as any })}
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900"
-                  >
-                    <option value="digestive">Digestive (အစာခြေစနစ်)</option>
-                    <option value="respiratory">Respiratory (အသက်ရှူလမ်းကြောင်း)</option>
-                    <option value="antimicrobial">Antimicrobial (ပိုးသတ်)</option>
-                    <option value="anti-inflammatory">Anti-inflammatory (ရောင်ရမ်းကျ)</option>
-                    <option value="adaptogen">Adaptogen (အားတိုး)</option>
-                    <option value="circulatory">Circulatory (သွေးလည်ပတ်မှု)</option>
-                  </select>
+              {/* Category & Dual Plant Photo Section (Upload from Device or URL) */}
+              <div className="space-y-3 p-3.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold mb-1">{language === 'my' ? 'ကဏ္ဍ (Category)' : 'Category'}</label>
+                    <select
+                      value={editingHerb.category}
+                      onChange={e => setEditingHerb({ ...editingHerb, category: e.target.value as any })}
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800"
+                    >
+                      <option value="digestive">Digestive (အစာခြေစနစ်)</option>
+                      <option value="respiratory">Respiratory (အသက်ရှူလမ်းကြောင်း)</option>
+                      <option value="antimicrobial">Antimicrobial (ပိုးသတ်)</option>
+                      <option value="anti-inflammatory">Anti-inflammatory (ရောင်ရမ်းကျ)</option>
+                      <option value="adaptogen">Adaptogen (အားတိုး)</option>
+                      <option value="circulatory">Circulatory (သွေးလည်ပတ်မှု)</option>
+                    </select>
+                  </div>
+
+                  {/* Mode switch between File Upload and Image URL */}
+                  <div>
+                    <label className="block text-xs font-bold mb-1 flex items-center justify-between">
+                      <span>{language === 'my' ? 'ဓာတ်ပုံ ရွေးချယ်နည်း' : 'Image Source'}</span>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal">
+                        Supabase Storage (uploads/plants)
+                      </span>
+                    </label>
+                    <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-neutral-100 dark:bg-neutral-800">
+                      <button
+                        type="button"
+                        onClick={() => setHerbImageSource('upload')}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                          herbImageSource === 'upload'
+                            ? 'bg-white dark:bg-neutral-700 text-emerald-700 dark:text-emerald-300 shadow-xs'
+                            : 'text-neutral-500 hover:text-black dark:hover:text-white'
+                        }`}
+                      >
+                        <UploadCloud className="w-3.5 h-3.5" />
+                        <span>{language === 'my' ? 'ဖုန်း/ကွန်ပျူတာမှ တင်မည်' : 'Upload File'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHerbImageSource('url')}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                          herbImageSource === 'url'
+                            ? 'bg-white dark:bg-neutral-700 text-emerald-700 dark:text-emerald-300 shadow-xs'
+                            : 'text-neutral-500 hover:text-black dark:hover:text-white'
+                        }`}
+                      >
+                        <LinkIcon className="w-3.5 h-3.5" />
+                        <span>{language === 'my' ? 'Image URL ထည့်မည်' : 'Image URL'}</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold mb-1">{language === 'my' ? 'ဓာတ်ပုံ URL (Image URL)' : 'Photo Image URL'}</label>
-                  <input
-                    type="text"
-                    value={editingHerb.imageUrl}
-                    onChange={e => setEditingHerb({ ...editingHerb, imageUrl: e.target.value })}
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900"
-                    placeholder="https://..."
-                  />
-                </div>
+
+                {/* Upload or URL Controls */}
+                {herbImageSource === 'upload' ? (
+                  <div className="space-y-2">
+                    <label className="border-2 border-dashed border-neutral-300 dark:border-neutral-700 hover:border-emerald-500 rounded-2xl p-4 flex flex-col items-center justify-center cursor-pointer transition-colors bg-neutral-50/70 dark:bg-neutral-800/40">
+                      {herbUploading ? (
+                        <div className="flex flex-col items-center justify-center py-2 space-y-2">
+                          <Loader2 className="w-6 h-6 text-emerald-600 animate-spin" />
+                          <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 font-myanmar">
+                            {language === 'my' ? 'WebP သို့ ချုံ့၍ Supabase Storage (plants/) သို့ တင်နေပါသည်...' : 'Compressing to WebP & uploading to Supabase Storage...'}
+                          </span>
+                        </div>
+                      ) : (
+                        <>
+                          <UploadCloud className="w-8 h-8 text-emerald-600 dark:text-emerald-400 mb-1.5" />
+                          <span className="text-xs font-bold text-neutral-800 dark:text-neutral-200 font-myanmar">
+                            {language === 'my' ? 'ဆေးပင်ဓာတ်ပုံ ရွေးချယ်ရန် နှိပ်ပါ (သို့မဟုတ် Drag & Drop)' : 'Click to select plant photo (or Drag & Drop)'}
+                          </span>
+                          <span className="text-[10px] text-neutral-400 mt-0.5">
+                            {language === 'my' ? '⚡ 1200px WebP အဖြစ် အလိုအလျောက်ချုံ့ပြီး Supabase Storage သို့ တင်ပေးမည်' : 'Auto-compressed to WebP 1200px & hosted on Supabase'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleHerbImageUpload}
+                            className="hidden"
+                          />
+                        </>
+                      )}
+                    </label>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-bold mb-1">{language === 'my' ? 'ဓာတ်ပုံ URL (Image URL)' : 'Photo Image URL'}</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={editingHerb.imageUrl}
+                        onChange={e => setEditingHerb({ ...editingHerb, imageUrl: e.target.value })}
+                        className="flex-1 px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800"
+                        placeholder="https://..."
+                      />
+                      {editingHerb.imageUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setEditingHerb({ ...editingHerb, imageUrl: '' })}
+                          className="px-2.5 py-2 rounded-xl bg-neutral-200 dark:bg-neutral-700 text-xs font-bold hover:bg-red-500 hover:text-white transition"
+                        >
+                          {language === 'my' ? 'ဖျက်မည်' : 'Clear'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Live Image Preview Thumbnail & Supabase Storage Badge */}
+                {editingHerb.imageUrl && (
+                  <div className="flex items-center gap-3 p-2.5 rounded-xl bg-neutral-50 dark:bg-neutral-800/80 border border-neutral-200 dark:border-neutral-700">
+                    <img
+                      src={editingHerb.imageUrl}
+                      alt="Plant Preview"
+                      className="w-16 h-16 rounded-xl object-cover shrink-0 border border-neutral-200 dark:border-neutral-700 shadow-2xs"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546842931-886c185b4c8c?auto=format&fit=crop&w=400&q=80';
+                      }}
+                    />
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                          {editingHerb.imageUrl.includes('supabase.co') ? '✓ Supabase Storage Hosted' : '✓ Image Ready'}
+                        </span>
+                        {editingHerb.imageUrl.includes('/plants/') && (
+                          <span className="text-[10px] font-mono text-neutral-400">
+                            uploads/plants/
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] font-mono text-neutral-500 dark:text-neutral-400 truncate">
+                        {editingHerb.imageUrl}
+                      </p>
+                      {herbCompressionInfo && (
+                        <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
+                          ⚡ {herbCompressionInfo.originalSize} ➔ {herbCompressionInfo.compressedSize} ({herbCompressionInfo.savingsPercent}% saved) • {herbCompressionInfo.dimensions}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingHerb({ ...editingHerb, imageUrl: '' });
+                        setHerbCompressionInfo(null);
+                      }}
+                      className="p-1.5 rounded-lg text-neutral-400 hover:text-red-500 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition"
+                      title="Remove image"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

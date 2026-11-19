@@ -14,6 +14,7 @@ import { ChatMessage } from '../types';
 import { cleanMarkdownText } from '../utils/cleanText';
 import { getTopicSuggestions } from '../utils/suggestionHelper';
 import { PromptGeneratorModal } from './PromptGeneratorModal';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface AiAssistantWidgetProps {
   isOpen: boolean;
@@ -99,14 +100,23 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
     setLoading(true);
 
     try {
+      const geminiKey = localStorage.getItem('tmhip_gemini_key') || '';
+      const openRouterKey = localStorage.getItem('tmhip_openrouter_key') || '';
+      const selectedModel = localStorage.getItem('tmhip_openrouter_model') || 'google/gemini-2.5-flash';
+
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...(geminiKey ? { 'x-gemini-key': geminiKey } : {}),
+          ...(openRouterKey ? { 'x-openrouter-key': openRouterKey } : {})
         },
         body: JSON.stringify({ 
           message: queryText, 
-          language: chatLanguage
+          language: chatLanguage,
+          geminiApiKey: geminiKey,
+          openRouterApiKey: openRouterKey,
+          model: selectedModel
         }),
       });
 
@@ -123,6 +133,7 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
         text: cleanMarkdownText(data.response),
         myanmarText: isBurmese ? undefined : cleanMarkdownText(data.myanmarResponse || ''),
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        suggestions: getTopicSuggestions(queryText, data.response || '', isBurmese),
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -153,6 +164,7 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
           sender: 'assistant',
           text: fallbackText,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          suggestions: getTopicSuggestions(queryText, fallbackText, isBurmese),
         },
       ]);
     } finally {
@@ -236,9 +248,13 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
                         {msg.myanmarText}
                       </p>
                     )}
-                    <p className="whitespace-pre-line font-myanmar">
-                      {msg.text}
-                    </p>
+                    {isUser ? (
+                      <p className="whitespace-pre-line font-myanmar">
+                        {msg.text}
+                      </p>
+                    ) : (
+                      <MarkdownRenderer content={msg.text} />
+                    )}
 
                     {!isUser && (
                       <>

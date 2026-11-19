@@ -9,9 +9,12 @@ import {
   AlertCircle, 
   CheckCircle2, 
   RefreshCw,
-  AlertTriangle
+  AlertTriangle,
+  Calendar,
+  Clock
 } from 'lucide-react';
 import { supabase, Post } from '../lib/supabaseClient';
+import { compressImage, formatBytes } from '../utils/imageCompressor';
 
 interface EditPostModalProps {
   postId: string | null;
@@ -35,9 +38,16 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  const getNowLocalDatetime = () => {
+    const now = new Date();
+    const offset = now.getTimezoneOffset() * 60000;
+    return new Date(now.getTime() - offset).toISOString().slice(0, 16);
+  };
+
   // Form fields
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [customDateTime, setCustomDateTime] = useState<string>('');
   const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
   const [removeExistingImage, setRemoveExistingImage] = useState(false);
   const [newImageFile, setNewImageFile] = useState<File | null>(null);
@@ -55,6 +65,7 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
       // Reset state when closed
       setTitle('');
       setContent('');
+      setCustomDateTime('');
       setExistingImageUrl(null);
       setRemoveExistingImage(false);
       setNewImageFile(null);
@@ -83,6 +94,13 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
         if (data) {
           setTitle(data.title || '');
           setContent(data.content || '');
+          if (data.created_at) {
+            const d = new Date(data.created_at);
+            const offset = d.getTimezoneOffset() * 60000;
+            setCustomDateTime(new Date(d.getTime() - offset).toISOString().slice(0, 16));
+          } else {
+            setCustomDateTime(getNowLocalDatetime());
+          }
           setExistingImageUrl(data.image_url || null);
           setRemoveExistingImage(false);
           setNewImageFile(null);
@@ -260,13 +278,18 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
       }
 
       // Execute update() on 'posts' table
+      const updatePayload: any = {
+        title: title.trim(),
+        content: content.trim(),
+        image_url: finalImageUrl
+      };
+      if (customDateTime) {
+        updatePayload.created_at = new Date(customDateTime).toISOString();
+      }
+
       const { data: updatedRecord, error: updateError } = await supabase
         .from('posts')
-        .update({
-          title: title.trim(),
-          content: content.trim(),
-          image_url: finalImageUrl
-        })
+        .update(updatePayload)
         .eq('id', postId)
         .select()
         .single();
@@ -431,6 +454,35 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
                   <span className="leading-relaxed">{statusMessage.text}</span>
                 </div>
               )}
+
+              {/* Custom Publishing Date & Time */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label 
+                    htmlFor="edit-post-datetime"
+                    className="text-xs font-bold text-neutral-700 dark:text-neutral-300 comfort:text-[#4a4035] font-myanmar flex items-center gap-1.5"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <span>{language === 'my' ? 'ရက်စွဲနှင့် အချိန် (Publish Date & Time)' : 'Publish Date & Time'}</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setCustomDateTime(getNowLocalDatetime())}
+                    className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer font-myanmar"
+                  >
+                    <Clock className="w-3 h-3" />
+                    <span>{language === 'my' ? 'လက်ရှိအချိန် ထားမည်' : 'Set to Now'}</span>
+                  </button>
+                </div>
+                <input
+                  id="edit-post-datetime"
+                  type="datetime-local"
+                  value={customDateTime}
+                  onChange={(e) => setCustomDateTime(e.target.value)}
+                  disabled={saving || deleting}
+                  className="w-full px-4 py-2.5 rounded-2xl bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#f2e9d8] border border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1] text-xs sm:text-sm text-black dark:text-white comfort:text-[#231f1a] font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
+                />
+              </div>
 
               {/* Title Field */}
               <div>

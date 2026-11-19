@@ -1,12 +1,16 @@
 /**
- * Utility to strip markdown asterisks (*, **, ***) and clean AI responses for user display.
+ * Utility to clean AI responses for user display without destroying Markdown syntax.
  */
 export function cleanMarkdownText(text: string): string {
   if (!text) return '';
-  return text
-    // Remove all markdown asterisks (*, **, ***)
-    .replace(/\*{1,3}/g, '')
-    // Standardize bullet points to clean dots
-    .replace(/^[-*+]\s+/gm, '• ')
-    .trim();
+  let cleaned = text.trim();
+
+  // Strip code block wrappers if the model wrapped the response in ```markdown ... ```
+  if (cleaned.startsWith('```markdown')) {
+    cleaned = cleaned.replace(/^```markdown\s*/, '').replace(/\s*```$/, '');
+  } else if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```\w*\s*/, '').replace(/\s*```$/, '');
+  }
+
+  return cleaned.trim();
 }

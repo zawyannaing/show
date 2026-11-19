@@ -21,6 +21,7 @@ import {
   Phone,
   Edit3,
   Calendar,
+  Clock,
   Lock,
   LogOut,
   Eye,
@@ -35,7 +36,9 @@ import {
 } from 'lucide-react';
 import { supabase, Post } from '../lib/supabaseClient';
 import { SectionContentManager } from './SectionContentManager';
+import { formatFacebookDate } from '../utils/dateFormatter';
 import { EditPostModal } from './EditPostModal';
+import { compressImage, formatBytes } from '../utils/imageCompressor';
 import { 
   signInWithPassword, 
   signUpWithPassword,
@@ -100,7 +103,70 @@ USING (bucket_id = 'uploads');
 CREATE POLICY "Allow public delete from uploads bucket"
 ON storage.objects FOR DELETE
 TO public
-USING (bucket_id = 'uploads');`;
+USING (bucket_id = 'uploads');
+
+-- 6. Create user_bookmarks table for Cloud Sync
+CREATE TABLE IF NOT EXISTS public.user_bookmarks (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  item_type TEXT NOT NULL, -- 'remedy' | 'acupoint' | 'herb'
+  item_id TEXT NOT NULL,
+  item_data JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+  UNIQUE(user_id, item_type, item_id)
+);
+
+ALTER TABLE public.user_bookmarks ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow public read user_bookmarks" ON public.user_bookmarks;
+DROP POLICY IF EXISTS "Allow public insert user_bookmarks" ON public.user_bookmarks;
+DROP POLICY IF EXISTS "Allow public update user_bookmarks" ON public.user_bookmarks;
+DROP POLICY IF EXISTS "Allow public delete user_bookmarks" ON public.user_bookmarks;
+
+CREATE POLICY "Allow public read user_bookmarks" ON public.user_bookmarks FOR SELECT TO public USING (true);
+CREATE POLICY "Allow public insert user_bookmarks" ON public.user_bookmarks FOR INSERT TO public WITH CHECK (true);
+CREATE POLICY "Allow public update user_bookmarks" ON public.user_bookmarks FOR UPDATE TO public USING (true);
+CREATE POLICY "Allow public delete user_bookmarks" ON public.user_bookmarks FOR DELETE TO public USING (true);
+
+-- 7. Create user_chat_sessions table for AI Doctor Cloud Sync
+CREATE TABLE IF NOT EXISTS public.user_chat_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  messages JSONB DEFAULT '[]'::jsonb,
+  last_message_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.user_chat_sessions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow public read user_chat_sessions" ON public.user_chat_sessions;
+DROP POLICY IF EXISTS "Allow public insert user_chat_sessions" ON public.user_chat_sessions;
+DROP POLICY IF EXISTS "Allow public update user_chat_sessions" ON public.user_chat_sessions;
+DROP POLICY IF EXISTS "Allow public delete user_chat_sessions" ON public.user_chat_sessions;
+
+CREATE POLICY "Allow public read user_chat_sessions" ON public.user_chat_sessions FOR SELECT TO public USING (true);
+CREATE POLICY "Allow public insert user_chat_sessions" ON public.user_chat_sessions FOR INSERT TO public WITH CHECK (true);
+CREATE POLICY "Allow public update user_chat_sessions" ON public.user_chat_sessions FOR UPDATE TO public USING (true);
+CREATE POLICY "Allow public delete user_chat_sessions" ON public.user_chat_sessions FOR DELETE TO public USING (true);
+
+-- 8. Create post_comments table for Community Q&A
+CREATE TABLE IF NOT EXISTS public.post_comments (
+  id TEXT PRIMARY KEY,
+  post_id UUID REFERENCES public.posts(id) ON DELETE CASCADE,
+  author_id TEXT,
+  author_name TEXT NOT NULL,
+  author_avatar TEXT,
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.post_comments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow public read post_comments" ON public.post_comments;
+DROP POLICY IF EXISTS "Allow public insert post_comments" ON public.post_comments;
+DROP POLICY IF EXISTS "Allow public delete post_comments" ON public.post_comments;
+
+CREATE POLICY "Allow public read post_comments" ON public.post_comments FOR SELECT TO public USING (true);
+CREATE POLICY "Allow public insert post_comments" ON public.post_comments FOR INSERT TO public WITH CHECK (true);
+CREATE POLICY "Allow public delete post_comments" ON public.post_comments FOR DELETE TO public USING (true);`;
 
 export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({ 
   language, 
@@ -121,8 +187,22 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [postType, setPostType] = useState<'live' | 'daily'>('live');
+  const getNowLocalDatetime = () => {
+    const now = new Date();
+    const offset = now.getTimezoneOffset() * 60000;
+    return new Date(now.getTime() - offset).toISOString().slice(0, 16);
+  };
+  const [customDateTime, setCustomDateTime] = useState<string>(() => getNowLocalDatetime());
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [compressing, setCompressing] = useState(false);
+  const [compressionInfo, setCompressionInfo] = useState<{
+    originalSize: string;
+    compressedSize: string;
+    savingsPercent: number;
+    format: string;
+    dimensions: string;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'error' | 'success' | 'info' | ''; text: string }>({
     type: '',
@@ -240,7 +320,7 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
     setTimeout(() => setCopiedSql(false), 2500);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -252,22 +332,40 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      setStatusMessage({ 
-        type: 'error', 
-        text: language === 'my' ? 'ဖိုင်အရွယ်အစားသည် 5MB ထက်မပိုရပါ' : 'Image file size must be less than 5MB.' 
-      });
-      return;
-    }
+    setCompressing(true);
+    setStatusMessage({
+      type: 'info',
+      text: language === 'my' ? 'ပုံအရွယ်အစားကို အလိုအလျောက် ချုံ့နေပါသည် (Compressing to WebP)...' : 'Compressing image to WebP...'
+    });
 
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
-    setStatusMessage({ type: '', text: '' });
-    setIsStorageRlsError(false);
+    try {
+      const result = await compressImage(file, { maxDimension: 1200, quality: 0.82 });
+      setImageFile(result.file);
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+      setImagePreview(result.previewUrl);
+      setCompressionInfo({
+        originalSize: formatBytes(result.originalSize),
+        compressedSize: formatBytes(result.compressedSize),
+        savingsPercent: result.savingsPercent,
+        format: result.format.toUpperCase(),
+        dimensions: `${result.dimensions.width}×${result.dimensions.height}px`
+      });
+      setStatusMessage({ type: '', text: '' });
+      setIsStorageRlsError(false);
+    } catch (err: any) {
+      console.warn('Image compression fallback:', err);
+      setImageFile(file);
+      setImagePreview(URL.createObjectURL(file));
+      setCompressionInfo(null);
+      setStatusMessage({ type: '', text: '' });
+    } finally {
+      setCompressing(false);
+    }
   };
 
   const handleRemoveImage = () => {
     setImageFile(null);
+    setCompressionInfo(null);
     if (imagePreview) {
       URL.revokeObjectURL(imagePreview);
       setImagePreview(null);
@@ -308,14 +406,15 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
 
       // 1. Upload image to Supabase Storage bucket 'uploads' if provided and not skipped
       if (imageFile && !skipImage) {
-        const fileExt = imageFile.name.split('.').pop() || 'jpg';
+        const fileExt = imageFile.name.split('.').pop() || 'webp';
         const cleanFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
         const filePath = `posts/${cleanFileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from('uploads')
           .upload(filePath, imageFile, {
-            cacheControl: '3600',
+            cacheControl: '31536000',
+            contentType: imageFile.type || 'image/webp',
             upsert: false
           });
 
@@ -372,13 +471,16 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
         ? (title.trim().startsWith('[Daily]') ? title.trim() : `[Daily] ${title.trim()}`)
         : (title.trim().startsWith('[Live]') ? title.trim() : `[Live] ${title.trim()}`);
 
+      const postCreatedAt = customDateTime ? new Date(customDateTime).toISOString() : new Date().toISOString();
+
       const { data: insertedData, error: insertError } = await supabase
         .from('posts')
         .insert([
           {
             title: formattedTitle,
             content: content.trim(),
-            image_url: publicImageUrl
+            image_url: publicImageUrl,
+            created_at: postCreatedAt
           }
         ])
         .select();
@@ -390,6 +492,7 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
       // 4. Success Reset
       setTitle('');
       setContent('');
+      setCustomDateTime(getNowLocalDatetime());
       handleRemoveImage();
       const usedFallback = isStorageRlsError;
       setStatusMessage({
@@ -440,6 +543,45 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
   };
 
   if (!isAuthenticated || !isAdmin) {
+    // If user is logged in as a normal or premium user, completely deny access
+    if (isAuthenticated && !isAdmin) {
+      return (
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
+          <button
+            onClick={onNavigateHome}
+            className="flex items-center gap-2 text-xs sm:text-sm font-bold text-neutral-600 dark:text-neutral-400 comfort:text-[#645a4e] hover:text-black dark:hover:text-white transition-colors cursor-pointer w-fit mb-8"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>{language === 'my' ? 'ပင်မစာမျက်နှာသို့ ပြန်သွားမည်' : 'Back to Home'}</span>
+          </button>
+
+          <div className="max-w-md mx-auto p-6 sm:p-8 bg-white dark:bg-neutral-900 comfort:bg-[#faf6ee] rounded-3xl border border-neutral-200 dark:border-neutral-800 shadow-xl space-y-6 text-center animate-in fade-in duration-200">
+            <div className="w-16 h-16 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 flex items-center justify-center mx-auto border border-red-500/20">
+              <ShieldAlert className="w-8 h-8" />
+            </div>
+
+            <div>
+              <h2 className="text-xl font-extrabold text-black dark:text-white comfort:text-[#231f1a] font-myanmar">
+                {language === 'my' ? 'ဝင်ရောက်ခွင့် မရှိပါ (Admin သာလျှင်)' : 'Access Restricted'}
+              </h2>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 comfort:text-[#645a4e] mt-2 leading-relaxed font-myanmar">
+                {language === 'my'
+                  ? 'ဤ စီမံခန့်ခွဲမှု ကဏ္ဍ (Admin Panel) ကို ခွင့်ပြုချက်ရရှိထားသော စနစ်စီမံခန့်ခွဲသူ (Admin Email) များသာ ကြည့်ရှုခွင့်ရှိပါသည်။ သာမန်အသုံးပြုသူ သို့မဟုတ် Premium အသုံးပြုသူများ ဝင်ရောက်ခွင့်မရှိပါ။'
+                  : 'This Admin Panel is restricted to authorized Administrator emails only. Standard and Premium user accounts do not have permission to view or manage this section.'}
+              </p>
+            </div>
+
+            <button
+              onClick={onNavigateHome}
+              className="w-full py-3 px-4 rounded-2xl bg-black text-white dark:bg-white dark:text-black font-bold text-xs transition cursor-pointer font-myanmar hover:opacity-90 active:scale-95"
+            >
+              {language === 'my' ? 'ပင်မစာမျက်နှာသို့ ပြန်သွားမည်' : 'Return to Home'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
         <button
@@ -826,6 +968,35 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
             </div>
           </div>
 
+          {/* Custom Publishing Date & Time */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 comfort:text-[#4a4035] font-myanmar flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>{language === 'my' ? 'ပို့စ် ရက်စွဲနှင့် အချိန် (Publish Date & Time)' : 'Publish Date & Time'}</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setCustomDateTime(getNowLocalDatetime())}
+                className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer font-myanmar"
+              >
+                <Clock className="w-3 h-3" />
+                <span>{language === 'my' ? 'လက်ရှိအချိန် အသုံးပြုမည်' : 'Set to Now'}</span>
+              </button>
+            </div>
+            <input
+              type="datetime-local"
+              value={customDateTime}
+              onChange={(e) => setCustomDateTime(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-2xl bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#f2e9d8] border border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1] text-black dark:text-white comfort:text-[#231f1a] text-xs sm:text-sm font-mono focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
+            />
+            <p className="text-[11px] text-neutral-400 dark:text-neutral-500 font-myanmar mt-1">
+              {language === 'my' 
+                ? 'လွန်ခဲ့သော ရက်စွဲများ သို့မဟုတ် စိတ်ကြိုက် အချိန်ဖြင့် ပို့စ်တင်လိုပါက ပြင်ဆင်သတ်မှတ်နိုင်ပါသည် (မပြင်ပါက လက်ရှိအချိန်ကို အသုံးပြုပါမည်)'
+                : 'Set a past or custom time for this post (defaults to current time).'}
+            </p>
+          </div>
+
           {/* Post Title */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 comfort:text-[#4a4035] mb-2 font-myanmar">
@@ -864,34 +1035,62 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
 
             {!imagePreview ? (
               <label className="border-2 border-dashed border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1] hover:border-black dark:hover:border-white rounded-3xl p-6 flex flex-col items-center justify-center cursor-pointer transition-colors bg-neutral-50 dark:bg-neutral-800/50 comfort:bg-[#f2e9d8]/50">
-                <UploadCloud className="w-10 h-10 text-neutral-400 mb-2" />
-                <span className="text-xs font-bold text-neutral-700 dark:text-neutral-300 comfort:text-[#231f1a] font-myanmar">
-                  {language === 'my' ? 'ပုံရွေးချယ်ရန် နှိပ်ပါ (သို့မဟုတ် drag & drop)' : 'Click to select image (or drag & drop)'}
-                </span>
-                <span className="text-[11px] text-neutral-400 mt-1">
-                  JPG, PNG, WEBP (Max 5MB) &bull; Uploads to Supabase Storage
-                </span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
+                {compressing ? (
+                  <div className="flex flex-col items-center justify-center py-2 space-y-2">
+                    <Loader2 className="w-8 h-8 text-emerald-600 animate-spin" />
+                    <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 font-myanmar">
+                      {language === 'my' ? 'ပုံအရွယ်အစား ချုံ့နေပါသည် (WebP format သို့ ပြောင်းနေသည်)...' : 'Auto-compressing image to WebP...'}
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <UploadCloud className="w-10 h-10 text-neutral-400 mb-2" />
+                    <span className="text-xs font-bold text-neutral-700 dark:text-neutral-300 comfort:text-[#231f1a] font-myanmar">
+                      {language === 'my' ? 'ပုံရွေးချယ်ရန် နှိပ်ပါ (သို့မဟုတ် drag & drop)' : 'Click to select image (or drag & drop)'}
+                    </span>
+                    <span className="text-[11px] text-neutral-400 mt-1">
+                      {language === 'my' ? '⚡ 1200px WebP အဖြစ် အလိုအလျောက် ချုံ့ပေးမည် (90%+ နေရာချွေတာနိုင်သည်)' : 'Auto-compressed to WebP 1200px (Saves 90%+ storage)'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+                  </>
+                )}
               </label>
             ) : (
-              <div className="relative rounded-2xl overflow-hidden border border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1] bg-neutral-100 dark:bg-neutral-800">
-                <img
-                  src={imagePreview}
-                  alt="Preview"
-                  className="w-full h-56 object-cover"
-                />
-                <button
-                  type="button"
-                  onClick={handleRemoveImage}
-                  className="absolute top-3 right-3 p-2 bg-red-600 hover:bg-red-700 text-white rounded-full shadow-md text-xs font-bold flex items-center gap-1 cursor-pointer transition"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+              <div className="space-y-2">
+                <div className="relative rounded-2xl overflow-hidden border border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1] bg-neutral-100 dark:bg-neutral-800">
+                  <img
+                    src={imagePreview}
+                    alt="Preview"
+                    className="w-full h-56 object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleRemoveImage}
+                    className="absolute top-3 right-3 p-2 bg-red-600 hover:bg-red-700 text-white rounded-full shadow-md text-xs font-bold flex items-center gap-1 cursor-pointer transition"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {compressionInfo && (
+                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs font-mono text-emerald-800 dark:text-emerald-300 flex items-center justify-between flex-wrap gap-2">
+                    <span className="font-bold flex items-center gap-1.5 font-sans">
+                      <Sparkles className="w-4 h-4 text-emerald-600" />
+                      <span>⚡ Auto-Compressed ({compressionInfo.format}):</span>
+                    </span>
+                    <span className="font-bold">
+                      {compressionInfo.originalSize} ➔ <strong className="text-emerald-600 dark:text-emerald-400">{compressionInfo.compressedSize}</strong> ({compressionInfo.savingsPercent}% smaller)
+                    </span>
+                    <span className="text-neutral-500 text-[11px]">
+                      {compressionInfo.dimensions}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -965,7 +1164,7 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
                       {post.title}
                     </h3>
                     <p className="text-[11px] text-neutral-400 truncate mt-0.5">
-                      {new Date(post.created_at).toLocaleDateString()} &bull; {post.content}
+                      {formatFacebookDate(post.created_at, language)} &bull; {post.content}
                     </p>
                   </div>
                 </div>

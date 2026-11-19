@@ -22,10 +22,19 @@ import {
   UploadCloud,
   FileText,
   Thermometer,
-  Leaf
+  Leaf,
+  ShieldCheck,
+  User,
+  LogIn,
+  Smartphone,
+  Download,
+  Search,
+  WifiOff
 } from 'lucide-react';
 import { ActiveSection, ThemeMode, FontSize } from '../types';
 import { LoginButton } from './LoginButton';
+import { useAuth } from '../hooks/useAuth';
+import { isPwaStandalone, promptPwaInstall } from '../lib/pwaHelper';
 
 interface NavbarProps {
   themeMode: ThemeMode;
@@ -38,6 +47,8 @@ interface NavbarProps {
   onSelectSection: (section: ActiveSection) => void;
   onOpenCatalog?: () => void;
   onOpenChat?: () => void;
+  onOpenSearch?: () => void;
+  onOpenOfflinePack?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -51,8 +62,11 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectSection,
   onOpenCatalog,
   onOpenChat,
+  onOpenSearch,
+  onOpenOfflinePack,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { isAdmin } = useAuth();
 
   // Close menu on Escape key
   useEffect(() => {
@@ -82,25 +96,48 @@ export const Navbar: React.FC<NavbarProps> = ({
       labelEn: 'Community Bulletins & Posts',
       labelMy: 'ကျန်းမာရေး သတင်းလွှာနှင့် ပို့စ်များ',
       shortEn: 'Home',
-      shortMy: 'ပင်မ သတင်းလွှာ',
+      shortMy: 'ပင်မ',
       descEn: 'Live community posts & daily medical bulletins',
       descMy: 'တိုက်ရိုက်လွှင့်တင် ပို့စ်များနှင့် နေ့စဉ် ကျန်းမာရေး သတင်းလွှာများ',
       icon: <Home className="w-4 h-4 text-emerald-600" />,
       isBadge: true,
       badgeText: 'Live',
     },
-
+    {
+      id: 'assistant',
+      labelEn: 'AI Doctor & Home Treatment Advisor',
+      labelMy: 'AI ဆရာဝန်နှင့် အိမ်တွင်းကုသမှုအကြံပေး',
+      shortEn: 'AI Doctor',
+      shortMy: 'AI ဆရာဝန်',
+      descEn: 'Search medicines, symptoms, medicine photo scanning & history',
+      descMy: 'ဆေးဝါး၊ ရောဂါလက္ခဏာများ ရှာဖွေခြင်း၊ ဓာတ်ပုံစစ်ဆေးခြင်းနှင့် မှတ်တမ်း',
+      icon: <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />,
+      isBadge: true,
+      badgeText: 'AI',
+    },
     {
       id: 'remedies',
       labelEn: 'Symptoms & Home Remedies',
       labelMy: 'ရောဂါလက္ခဏာများ',
       shortEn: 'Remedies',
-      shortMy: 'ရောဂါလက္ခဏာ',
+      shortMy: 'ဆေးနည်း',
       descEn: 'Home remedies for runny nose, cough, stomach ache, skin, toothache & headache',
       descMy: 'နှာစီး၊ ချောင်းဆိုး၊ ဗိုက်အောင့်၊ အရေပြား၊ သွားကိုက်၊ ခေါင်းကိုက် သဘာဝ ဆေးနည်းများ',
       icon: <Thermometer className="w-4 h-4 text-teal-600 dark:text-teal-400" />,
       isBadge: true,
       badgeText: 'Remedies',
+    },
+    {
+      id: 'home_treatments',
+      labelEn: 'Home Acupressure Treatments',
+      labelMy: 'အိမ်တွင်း လက်နှိပ်ကုထုံးများ',
+      shortEn: 'Treatments',
+      shortMy: 'လက်နှိပ်ကုထုံး',
+      descEn: '37 Acupressure points guide with anatomical diagrams, table view & timer',
+      descMy: 'ရောဂါ ၃၇ မျိုးအတွက် အိမ်တွင်း လက်နှိပ်ကုထုံး ဆုံမှတ်များ၊ ဇယားနှင့် အချိန်မှတ်စက်',
+      icon: <ShieldCheck className="w-4 h-4 text-sky-500" />,
+      isBadge: true,
+      badgeText: '37 Points',
     },
     {
       id: 'plants',
@@ -137,18 +174,6 @@ export const Navbar: React.FC<NavbarProps> = ({
       icon: <Phone className="w-4 h-4 text-sky-500" />,
     },
     {
-      id: 'assistant',
-      labelEn: 'Home Treatment Advisor',
-      labelMy: 'အိမ်တွင်းကုသမှုအကြံပေး',
-      shortEn: 'Advisor',
-      shortMy: 'အကြံပေး',
-      descEn: 'Search medicines, symptoms, medicine photo scanning & history',
-      descMy: 'ဆေးဝါး၊ ရောဂါလက္ခဏာများ ရှာဖွေခြင်း၊ ဓာတ်ပုံစစ်ဆေးခြင်းနှင့် မှတ်တမ်း',
-      icon: <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />,
-      isBadge: true,
-      badgeText: 'AI',
-    },
-    {
       id: 'admin',
       labelEn: 'Admin Panel & Sections',
       labelMy: 'စီမံခန့်ခွဲမှုနှင့် ပို့စ်တင်ရန် (Admin Panel)',
@@ -161,6 +186,9 @@ export const Navbar: React.FC<NavbarProps> = ({
       badgeText: 'Admin',
     },
   ];
+
+  // Only display Admin Panel in navigation if current user is an authorized admin
+  const visibleNavItems = navItems.filter((item) => item.id !== 'admin' || isAdmin);
 
   const fontSizes: { key: FontSize; label: string; descEn: string; descMy: string }[] = [
     { key: 'sm', label: 'A-', descEn: 'Compact (14px)', descMy: 'အသေး' },
@@ -179,11 +207,11 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <>
-      {/* Top Header: ONLY 2 BUTTONS ON RIGHT (Language Button & Menu Bar Button) */}
+      {/* Top Header: Responsive Clean Layout */}
       <header className="sticky top-0 z-40 w-full bg-white/95 dark:bg-neutral-950/95 comfort:bg-[#faf6ee]/95 backdrop-blur-md border-b border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1] transition-colors">
         <div className="max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
           
-          {/* Left: Brand Identity (SHOW CARE MYANMAR) */}
+          {/* Left: Brand Identity (SHOW CARE MYANMAR) - Only Brand on Mobile Left */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => {
@@ -194,8 +222,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               id="tmhip-logo-btn"
               type="button"
             >
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 group-hover:scale-105 transition-transform duration-200 shrink-0">
-                <Leaf className="w-4 h-4 sm:w-5 sm:h-5 text-white animate-pulse" />
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 group-hover:scale-105 transition-transform duration-200 shrink-0">
+                <Leaf className="w-5 h-5 text-white animate-pulse" />
               </div>
               <div className="flex flex-col min-w-0">
                 <div className="flex items-center gap-1.5 min-w-0">
@@ -210,39 +238,64 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           </div>
 
-          {/* Right Header Actions: Login Button, Language Button & Menu Bar Button */}
-          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+          {/* Right Header Actions: Clean Mobile Menu / Desktop Extended Bar */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             
-            {/* Login / Auth Button */}
-            <LoginButton language={language} variant="compact" />
+            {/* Universal Search Spotlight Button */}
+            {onOpenSearch && (
+              <button
+                onClick={onOpenSearch}
+                className="h-10 px-3 sm:px-3.5 rounded-full bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#f2e9d8] hover:bg-neutral-200 dark:hover:bg-neutral-700 text-black dark:text-white comfort:text-[#231f1a] text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1] shadow-2xs active:scale-95"
+                type="button"
+                id="top-global-search-btn"
+                title={language === 'my' ? 'တစ်နေရာတည်းမှ ရှာဖွေမည် (⌘K)' : 'Universal Search (⌘K)'}
+                aria-label="Universal Search"
+              >
+                <Search className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span className="font-extrabold whitespace-nowrap hidden sm:inline">
+                  {language === 'my' ? 'ရှာဖွေရန်' : 'Search'}
+                </span>
+                <kbd className="hidden lg:inline text-[10px] px-1.5 py-0.2 rounded bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 text-neutral-400 font-mono">
+                  ⌘K
+                </kbd>
+              </button>
+            )}
 
-            {/* BUTTON 1: Language Button (EN / မြန်မာ) */}
+            {/* AI Doctor Header Shortcut */}
             <button
-              onClick={onToggleLanguage}
-              className="h-9 sm:h-10 px-2.5 sm:px-4 rounded-full bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#f2e9d8] hover:bg-neutral-200 dark:hover:bg-neutral-700 text-black dark:text-white comfort:text-[#231f1a] text-xs font-bold flex items-center gap-1 sm:gap-1.5 transition-colors cursor-pointer border border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1] shadow-2xs"
+              onClick={() => {
+                onSelectSection('assistant');
+                setMenuOpen(false);
+              }}
+              className={`h-10 px-3 sm:px-3.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border shadow-2xs active:scale-95 ${
+                activeSection === 'assistant'
+                  ? 'bg-purple-600 text-white border-transparent ring-2 ring-purple-500/30'
+                  : 'bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800'
+              }`}
               type="button"
-              id="top-language-toggle-btn"
-              title={language === 'en' ? 'Switch to Myanmar Unicode (မြန်မာဘာသာ)' : 'Switch to English'}
-              aria-label="Toggle language: EN / MY"
+              id="top-ai-doctor-btn"
+              title={language === 'my' ? 'AI ဆရာဝန်နှင့် တိုင်ပင်ဆွေးနွေးရန်' : 'Consult Clinical AI Doctor'}
             >
-              <Languages className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-              <span className="font-extrabold whitespace-nowrap">{language === 'en' ? 'EN' : 'မြန်မာ'}</span>
+              <Bot className="w-4 h-4 text-current" />
+              <span className="font-extrabold whitespace-nowrap hidden sm:inline">
+                {language === 'my' ? 'AI ဆရာဝန်' : 'AI Doctor'}
+              </span>
             </button>
 
-            {/* BUTTON 2: Menu Bar Button (Menu / မီနူး) */}
+            {/* Menu Bar Button (Menu / မီနူး) - Minimum 44x44px Touch Target on Mobile */}
             <button
               onClick={() => setMenuOpen((prev) => !prev)}
-              className={`h-9 sm:h-10 px-2.5 sm:px-4 rounded-full flex items-center gap-1.5 sm:gap-2 cursor-pointer border transition-all text-xs font-bold shadow-2xs ${
+              className={`min-h-[44px] min-w-[44px] h-11 px-3 sm:px-4 rounded-2xl flex items-center justify-center gap-1.5 sm:gap-2 cursor-pointer border transition-all text-xs font-bold shadow-2xs active:scale-95 ${
                 menuOpen
-                  ? 'bg-black text-white dark:bg-white dark:text-black comfort:bg-[#231f1a] comfort:text-[#faf6ee] border-transparent shadow-sm'
-                  : 'bg-black text-white dark:bg-white dark:text-black comfort:bg-[#231f1a] comfort:text-[#faf6ee] hover:opacity-90 border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1]'
+                  ? 'bg-black text-white dark:bg-white dark:text-black comfort:bg-[#231f1a] comfort:text-[#faf6ee] border-transparent shadow-sm ring-2 ring-emerald-500/30'
+                  : 'bg-neutral-100 dark:bg-neutral-800 comfort:bg-[#f2e9d8] hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-900 dark:text-white comfort:text-[#231f1a] border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1]'
               }`}
-              aria-label="Open menu bar with all controls"
+              aria-label="Open menu drawer with settings, login and navigation"
               id="top-menu-bar-btn"
               type="button"
             >
-              {menuOpen ? <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Menu className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
-              <span className="font-myanmar font-bold whitespace-nowrap">
+              {menuOpen ? <X className="w-5 h-5 text-current" /> : <Menu className="w-5 h-5 text-current" />}
+              <span className="font-myanmar font-bold whitespace-nowrap hidden sm:inline">
                 {language === 'my' ? 'မီနူး' : 'Menu'}
               </span>
             </button>
@@ -251,7 +304,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </header>
 
-      {/* Slide-over / Modal Menu Bar: ALL BUTTONS KEEP UP HERE */}
+      {/* Slide-over / Modal Menu Bar: ALL CONTROLS NEATLY ORGANIZED */}
       {menuOpen && (
         <div className="fixed inset-0 z-50 overflow-hidden" id="menu-bar-modal">
           {/* Backdrop Scrim */}
@@ -268,15 +321,15 @@ export const Navbar: React.FC<NavbarProps> = ({
               {/* Drawer Top Header */}
               <div className="p-4 sm:p-5 border-b border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1] flex items-center justify-between bg-neutral-50 dark:bg-neutral-900 comfort:bg-[#f2e9d8]">
                 <div className="flex items-center gap-2.5">
-                  <span className="w-8 h-8 bg-black dark:bg-white comfort:bg-[#231f1a] text-white dark:text-black comfort:text-[#faf6ee] rounded-xl flex items-center justify-center font-extrabold text-sm shadow-xs">
-                    +
-                  </span>
+                  <div className="w-9 h-9 bg-emerald-600 text-white rounded-xl flex items-center justify-center font-extrabold text-sm shadow-xs">
+                    <Leaf className="w-5 h-5" />
+                  </div>
                   <div>
                     <h3 className="font-extrabold text-sm sm:text-base text-black dark:text-white comfort:text-[#231f1a] tracking-tight font-myanmar">
-                      {language === 'my' ? 'မီနူးနှင့် ထိန်းချုပ်ခလုတ်များ' : 'Menu Bar & Action Controls'}
+                      {language === 'my' ? 'မီနူးနှင့် စီမံခန့်ခွဲမှု' : 'Menu & Settings'}
                     </h3>
                     <p className="text-[11px] text-neutral-500 dark:text-neutral-400 comfort:text-[#645a4e] font-myanmar">
-                      {language === 'my' ? 'ကဏ္ဍများနှင့် အရေးပေါ် ထိန်းချုပ်မှုများ' : 'Quick accessibility & section navigation'}
+                      {language === 'my' ? 'အကောင့်၊ ဘာသာစကားနှင့် ကဏ္ဍများ' : 'Account, language & navigation'}
                     </p>
                   </div>
                 </div>
@@ -284,19 +337,183 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <button
                   type="button"
                   onClick={() => setMenuOpen(false)}
-                  className="w-9 h-9 rounded-full bg-white dark:bg-neutral-800 comfort:bg-[#faf6ee] hover:bg-neutral-200 dark:hover:bg-neutral-700 flex items-center justify-center text-black dark:text-white comfort:text-[#231f1a] transition-colors border border-border-subtle dark:border-neutral-700 cursor-pointer shadow-2xs"
+                  className="min-h-[44px] min-w-[44px] w-11 h-11 rounded-full bg-white dark:bg-neutral-800 comfort:bg-[#faf6ee] hover:bg-neutral-200 dark:hover:bg-neutral-700 flex items-center justify-center text-black dark:text-white comfort:text-[#231f1a] transition-colors border border-border-subtle dark:border-neutral-700 cursor-pointer shadow-2xs active:scale-95"
                   aria-label="Close menu bar"
                   id="close-menu-bar-btn"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 
-              {/* Drawer Scrollable Content: All Buttons Kept Up Here */}
-              <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-6">
+              {/* Drawer Scrollable Content */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5">
 
-                {/* 1. Quick Action & Accessibility Bar (Font Size, Comfort, Emergency 192, Theme) */}
-                <div className="space-y-3">
+                {/* 1. User Account & Login Hub Card */}
+                <div className="p-3.5 rounded-2xl bg-neutral-100/90 dark:bg-neutral-900/90 comfort:bg-[#f2e9d8] border border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1] flex items-center justify-between gap-3 shadow-2xs">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                      <User className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-neutral-950 dark:text-white comfort:text-[#231f1a] font-myanmar truncate">
+                        {language === 'my' ? 'အသုံးပြုသူ အကောင့်' : 'User Account'}
+                      </div>
+                      <div className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
+                        {language === 'my' ? 'ကိုယ်ပိုင်အချက်အလက် / မှတ်တမ်း' : 'Profile & saved medical notes'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    <LoginButton language={language} variant="compact" />
+                  </div>
+                </div>
+
+                {/* 2. Language Switcher (Prominent Segmented Control in Menu Bar) */}
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-bold text-neutral-400 dark:text-neutral-500 comfort:text-[#8c7e6d] uppercase tracking-wider font-myanmar flex items-center gap-1.5">
+                    <Languages className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <span>{language === 'my' ? 'ဘာသာစကား ရွေးချယ်ရန် (Language)' : 'Language'}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-neutral-100 dark:bg-neutral-900 comfort:bg-[#f2e9d8] border border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1]">
+                    <button
+                      type="button"
+                      onClick={() => { if (language !== 'my') onToggleLanguage(); }}
+                      className={`min-h-[44px] py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 ${
+                        language === 'my'
+                          ? 'bg-white dark:bg-neutral-800 comfort:bg-[#faf6ee] text-emerald-600 dark:text-emerald-400 shadow-xs border border-emerald-500/30'
+                          : 'text-neutral-600 dark:text-neutral-400 hover:text-black dark:hover:text-white'
+                      }`}
+                    >
+                      <span className="text-base">🇲🇲</span>
+                      <span className="font-myanmar font-extrabold">မြန်မာဘာသာ</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { if (language !== 'en') onToggleLanguage(); }}
+                      className={`min-h-[44px] py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 ${
+                        language === 'en'
+                          ? 'bg-white dark:bg-neutral-800 comfort:bg-[#faf6ee] text-emerald-600 dark:text-emerald-400 shadow-xs border border-emerald-500/30'
+                          : 'text-neutral-600 dark:text-neutral-400 hover:text-black dark:hover:text-white'
+                      }`}
+                    >
+                      <span className="text-base">🇺🇸</span>
+                      <span className="font-sans font-extrabold">English</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 3. Offline Medical Pack Hub */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenOfflinePack?.();
+                    setMenuOpen(false);
+                  }}
+                  className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-teal-500/10 via-emerald-500/10 to-teal-500/5 border border-teal-500/25 flex items-center justify-between gap-3 shadow-2xs hover:border-teal-500/50 transition cursor-pointer text-left active:scale-98"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-teal-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <WifiOff className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0 font-myanmar">
+                      <div className="text-xs font-extrabold text-neutral-950 dark:text-white comfort:text-[#231f1a] truncate">
+                        {language === 'my' ? 'အော့ဖ်လိုင်း ဆေးကျမ်းများ (~12MB)' : 'Offline Medical Pack'}
+                      </div>
+                      <div className="text-[11px] text-teal-800 dark:text-teal-300 truncate">
+                        {language === 'my' ? 'အင်တာနက်မရှိဘဲ ဖတ်ရှုရန် ဒေါင်းလုဒ်ဆွဲမည်' : 'Read 120+ herbs & acupoints offline'}
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-teal-600 shrink-0" />
+                </button>
+
+                {/* 4. Mobile PWA App Install Hub */}
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-emerald-500/5 border border-emerald-500/25 flex items-center justify-between gap-3 shadow-2xs">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <Smartphone className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0 font-myanmar">
+                      <div className="text-xs font-extrabold text-neutral-950 dark:text-white comfort:text-[#231f1a] truncate">
+                        {isPwaStandalone()
+                          ? (language === 'my' ? 'ShowCare App သွင်းပြီးပါပြီ' : 'ShowCare App Installed')
+                          : (language === 'my' ? 'Android / iOS App ထည့်မည်' : 'Install Mobile App')}
+                      </div>
+                      <div className="text-[11px] text-emerald-800 dark:text-emerald-300 truncate">
+                        {isPwaStandalone()
+                          ? (language === 'my' ? 'အော့ဖ်လိုင်းအသုံးပြုနိုင်ပါသည် ✓' : 'Offline ready ✓')
+                          : (language === 'my' ? 'ဖုန်းထဲတွင် App သီးသန့်သုံးရန်' : 'Standalone fast access')}
+                      </div>
+                    </div>
+                  </div>
+                  {!isPwaStandalone() && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const outcome = await promptPwaInstall();
+                        if (outcome === 'accepted') {
+                          setMenuOpen(false);
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 transition cursor-pointer active:scale-95 shrink-0 shadow-xs"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>{language === 'my' ? 'သွင်းမည်' : 'Install'}</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* 3. Theme & Appearance Switcher (Light / Dark / Comfort with 44px touch targets) */}
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-bold text-neutral-400 dark:text-neutral-500 comfort:text-[#8c7e6d] uppercase tracking-wider font-myanmar flex items-center gap-1.5">
+                    <Sun className="w-3.5 h-3.5 text-amber-500" />
+                    <span>{language === 'my' ? 'နောက်ခံ အရောင်နှင့် အလင်းစနစ်' : 'Theme & Appearance'}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 p-1 rounded-2xl bg-neutral-100 dark:bg-neutral-900 comfort:bg-[#f2e9d8] border border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1]">
+                    <button
+                      type="button"
+                      onClick={() => onChangeThemeMode('light')}
+                      className={`min-h-[44px] py-2 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center gap-1 active:scale-95 ${
+                        themeMode === 'light'
+                          ? 'bg-white text-emerald-700 shadow-xs border border-emerald-500/30 font-black'
+                          : 'text-neutral-600 dark:text-neutral-400 hover:text-black dark:hover:text-white'
+                      }`}
+                      title={language === 'my' ? 'အလင်းစနစ်' : 'Light Mode'}
+                    >
+                      <Sun className="w-4 h-4 text-amber-500" />
+                      <span className="text-[11px] font-myanmar">{language === 'my' ? 'အလင်း' : 'Light'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onChangeThemeMode('dark')}
+                      className={`min-h-[44px] py-2 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center gap-1 active:scale-95 ${
+                        themeMode === 'dark'
+                          ? 'bg-neutral-800 text-emerald-400 shadow-xs border border-emerald-500/30 font-black'
+                          : 'text-neutral-600 dark:text-neutral-400 hover:text-black dark:hover:text-white'
+                      }`}
+                      title={language === 'my' ? 'အမှောင်စနစ်' : 'Dark Mode'}
+                    >
+                      <Moon className="w-4 h-4 text-purple-400" />
+                      <span className="text-[11px] font-myanmar">{language === 'my' ? 'အမှောင်' : 'Dark'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleComfortToggle}
+                      className={`min-h-[44px] py-2 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center gap-1 active:scale-95 ${
+                        themeMode === 'comfort'
+                          ? 'bg-[#785b3a] text-white shadow-xs border border-[#5d4428] font-black'
+                          : 'text-neutral-600 dark:text-neutral-400 hover:text-black dark:hover:text-white'
+                      }`}
+                      title={language === 'my' ? 'မျက်စိအေး စာဖတ်စနစ်' : 'Eye-Comfort Paper Mode'}
+                    >
+                      <Coffee className="w-4 h-4 text-amber-300" />
+                      <span className="text-[11px] font-myanmar">{language === 'my' ? 'မျက်စိအေး' : 'Comfort'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 4. Quick Actions & Emergency 192 Bar */}
+                <div className="space-y-3 pt-2 border-t border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1]">
                   <div className="text-[11px] font-bold text-neutral-400 dark:text-neutral-500 comfort:text-[#8c7e6d] uppercase tracking-wider font-myanmar">
                     {language === 'my' ? 'အမြန် ထိန်းချုပ်ခလုတ်များ' : 'Quick Actions & Accessibility'}
                   </div>
@@ -305,7 +522,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <a
                     href="tel:192"
                     id="menu-emergency-192-btn"
-                    className="w-full p-3 rounded-2xl bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-extrabold flex items-center justify-between shadow-md transition-all cursor-pointer"
+                    className="min-h-[44px] w-full p-3 rounded-2xl bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-extrabold flex items-center justify-between shadow-md transition-all cursor-pointer active:scale-95"
                   >
                     <div className="flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
@@ -343,7 +560,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                           key={f.key}
                           type="button"
                           onClick={() => onChangeFontSize(f.key)}
-                          className={`py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer border ${
+                          className={`min-h-[44px] py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer border active:scale-95 ${
                             fontSize === f.key
                               ? 'bg-black text-white dark:bg-white dark:text-black comfort:bg-[#231f1a] comfort:text-[#faf6ee] border-transparent shadow-xs'
                               : 'bg-white dark:bg-neutral-800 comfort:bg-[#faf6ee] text-neutral-700 dark:text-neutral-300 comfort:text-[#4a4035] hover:bg-neutral-200 dark:hover:bg-neutral-700 border-border-subtle dark:border-neutral-700 comfort:border-[#ded4c1]'
@@ -354,65 +571,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                       ))}
                     </div>
                   </div>
-
-                  {/* Eye-Comfort Reading Mode & Appearance Toggle Row */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={handleComfortToggle}
-                      className={`p-3 rounded-2xl border flex flex-col justify-between transition-all cursor-pointer text-left ${
-                        themeMode === 'comfort'
-                          ? 'bg-amber-600 text-white border-amber-700 shadow-xs'
-                          : 'bg-neutral-100 dark:bg-neutral-900 comfort:bg-[#f2e9d8] text-black dark:text-white comfort:text-[#231f1a] hover:bg-neutral-200 dark:hover:bg-neutral-800 border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1]'
-                      }`}
-                      id="menu-comfort-btn"
-                    >
-                      <Coffee className={`w-4 h-4 mb-2 ${themeMode === 'comfort' ? 'text-amber-100' : 'text-amber-600'}`} />
-                      <div>
-                        <div className="text-xs font-extrabold font-myanmar leading-tight">
-                          {language === 'my' ? 'မျက်စိအေး စာဖတ်စနစ်' : 'Comfort Mode'}
-                        </div>
-                        <div className={`text-[10px] mt-0.5 font-myanmar ${themeMode === 'comfort' ? 'text-amber-100' : 'text-neutral-500 dark:text-neutral-400'}`}>
-                          {themeMode === 'comfort' ? (language === 'my' ? 'အသုံးပြုနေသည်' : 'Active') : (language === 'my' ? 'နွေးထွေးသော စာရွက်ရောင်' : 'Warm Paper')}
-                        </div>
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => onChangeThemeMode(themeMode === 'dark' ? 'light' : 'dark')}
-                      className="p-3 rounded-2xl bg-neutral-100 dark:bg-neutral-900 comfort:bg-[#f2e9d8] hover:bg-neutral-200 dark:hover:bg-neutral-800 text-black dark:text-white comfort:text-[#231f1a] border border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1] flex flex-col justify-between transition-all cursor-pointer text-left"
-                      id="menu-theme-btn"
-                    >
-                      {themeMode === 'dark' ? (
-                        <Moon className="w-4 h-4 text-purple-400 mb-2" />
-                      ) : (
-                        <Sun className="w-4 h-4 text-amber-500 mb-2" />
-                      )}
-                      <div>
-                        <div className="text-xs font-extrabold leading-tight font-myanmar">
-                          {themeMode === 'dark' 
-                            ? (language === 'my' ? 'အမှောင်စနစ်' : 'Dark Mode') 
-                            : (language === 'my' ? 'အလင်းစနစ်' : 'Light Mode')}
-                        </div>
-                        <div className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5 font-myanmar">
-                          {themeMode === 'dark' 
-                            ? (language === 'my' ? 'အသုံးပြုနေသည်' : 'Active') 
-                            : (language === 'my' ? 'မူလအလင်း' : 'Standard')}
-                        </div>
-                      </div>
-                    </button>
-                  </div>
                 </div>
 
-                {/* 2. All Platform Section Navigation Buttons */}
+                {/* 5. All Platform Section Navigation Buttons */}
                 <div className="space-y-2 pt-2 border-t border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1]">
                   <div className="text-[11px] font-bold text-neutral-400 dark:text-neutral-500 comfort:text-[#8c7e6d] uppercase tracking-wider font-myanmar">
                     {language === 'my' ? 'ကျန်းမာရေး ကဏ္ဍများ' : 'Platform Navigation'}
                   </div>
 
                   <div className="space-y-1.5">
-                    {navItems.map((item) => {
+                    {visibleNavItems.map((item) => {
                       const isActive = activeSection === item.id;
                       return (
                         <button
@@ -522,15 +690,16 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       )}
 
-      {/* Persistent Clean Mobile Bottom Navigation Dock */}
+      {/* Persistent Clean Mobile Bottom Navigation Dock (4 Top Daily Sections + More) */}
       <nav 
-        className="xl:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-neutral-950/95 comfort:bg-[#faf6ee]/95 backdrop-blur-xl border-t border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1] px-1 py-1 shadow-lg transition-colors"
+        className="xl:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-neutral-950/95 comfort:bg-[#faf6ee]/95 backdrop-blur-xl border-t border-border-subtle dark:border-neutral-800 comfort:border-[#ded4c1] px-2 py-1 shadow-lg transition-colors"
         aria-label="Mobile Bottom Navigation Dock"
         id="mobile-bottom-menu-bar"
       >
-        <div className="grid grid-cols-6 gap-0.5 max-w-lg mx-auto">
-          {navItems.slice(0, 6).map((item) => {
-            const isActive = activeSection === item.id;
+        <div className="grid grid-cols-5 gap-1 max-w-md mx-auto">
+          {/* 4 Core Daily Sections */}
+          {visibleNavItems.slice(0, 4).map((item) => {
+            const isActive = activeSection === item.id && !menuOpen;
             return (
               <button
                 key={item.id}
@@ -548,19 +717,51 @@ export const Navbar: React.FC<NavbarProps> = ({
                 title={language === 'my' ? item.labelMy : item.labelEn}
               >
                 {isActive && (
-                  <span className="absolute top-0.5 w-6 h-1 rounded-full bg-black dark:bg-white comfort:bg-[#231f1a]"></span>
+                  <span className="absolute top-0 w-6 h-1 rounded-full bg-emerald-600 dark:bg-emerald-400 comfort:bg-emerald-700"></span>
                 )}
 
-                <div className={`p-0.5 transition-transform ${isActive ? 'scale-105' : 'scale-100'}`}>
+                <div className={`p-0.5 transition-transform ${isActive ? 'scale-110' : 'scale-100'}`}>
                   {item.icon}
                 </div>
 
-                <span className="text-[10px] leading-tight text-center font-myanmar truncate max-w-full">
+                <span className="text-[11px] font-semibold leading-tight text-center font-myanmar whitespace-nowrap mt-0.5">
                   {language === 'my' ? item.shortMy : item.shortEn}
                 </span>
               </button>
             );
           })}
+
+          {/* 5th Tab: More (အခြား / မီနူး) for Secondary Catalogs & Admin */}
+          {(() => {
+            const isSecondarySection = !['overview', 'assistant', 'remedies', 'home_treatments'].includes(activeSection);
+            const isMoreActive = menuOpen || isSecondarySection;
+            return (
+              <button
+                onClick={() => setMenuOpen((prev) => !prev)}
+                className={`flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl transition-all cursor-pointer relative min-h-[48px] ${
+                  isMoreActive
+                    ? 'text-black dark:text-white comfort:text-[#231f1a] font-bold'
+                    : 'text-neutral-500 dark:text-neutral-400 comfort:text-[#645a4e] hover:text-black dark:hover:text-white'
+                }`}
+                id="bottom-nav-more"
+                type="button"
+                title={language === 'my' ? 'နောက်ထပ် ကဏ္ဍများနှင့် မီနူး' : 'More Sections & Menu'}
+                aria-label="Open More Menu"
+              >
+                {isMoreActive && (
+                  <span className="absolute top-0 w-6 h-1 rounded-full bg-emerald-600 dark:bg-emerald-400 comfort:bg-emerald-700"></span>
+                )}
+
+                <div className={`p-0.5 transition-transform ${isMoreActive ? 'scale-110' : 'scale-100'}`}>
+                  <Menu className="w-4 h-4 text-neutral-600 dark:text-neutral-300 comfort:text-[#645a4e]" />
+                </div>
+
+                <span className="text-[11px] font-semibold leading-tight text-center font-myanmar whitespace-nowrap mt-0.5">
+                  {language === 'my' ? 'အခြား' : 'More'}
+                </span>
+              </button>
+            );
+          })()}
         </div>
       </nav>
     </>

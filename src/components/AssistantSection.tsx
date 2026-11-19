@@ -33,9 +33,11 @@ import { ChatMessage, ChatSession, MedicineAnalysisResult } from '../types';
 import { MedicineAnalysisCard } from './MedicineAnalysisCard';
 import { DEFAULT_CONSULTATION_HISTORY } from '../data/consultationHistory';
 import { cleanMarkdownText } from '../utils/cleanText';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import { useAuth } from '../hooks/useAuth';
 import { getTopicSuggestions, CLIENT_PROMPT_SUGGESTIONS } from '../utils/suggestionHelper';
 import { PromptGeneratorModal } from './PromptGeneratorModal';
+import { syncChatSessionsWithCloud, saveCloudChatSession, deleteCloudChatSession } from '../lib/userCloudSync';
 
 export interface StoredConsultation {
   id: string;
@@ -67,7 +69,7 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
   history = DEFAULT_CONSULTATION_HISTORY,
   onSelectHistoryItem
 }) => {
-  const { isAdmin } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [chatLanguage, setChatLanguage] = useState<'en' | 'my'>(language);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -83,6 +85,9 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
   const [revisitedConsultationTitle, setRevisitedConsultationTitle] = useState<string | null>(null);
   
   // Settings & Audio
+  const [geminiKey, setGeminiKey] = useState<string>(() => {
+    return localStorage.getItem('tmhip_gemini_key') || '';
+  });
   const [openRouterKey, setOpenRouterKey] = useState<string>(() => {
     return localStorage.getItem('tmhip_openrouter_key') || '';
   });
@@ -91,6 +96,15 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
   });
   const [showConfig, setShowConfig] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const handleResetApiKeys = () => {
+    setGeminiKey('');
+    setOpenRouterKey('');
+    setSelectedModel('google/gemini-2.5-flash');
+    localStorage.removeItem('tmhip_gemini_key');
+    localStorage.removeItem('tmhip_openrouter_key');
+    localStorage.removeItem('tmhip_openrouter_model');
+  };
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
 
@@ -204,6 +218,17 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
     }
   }, [sessions]);
 
+  // Cloud Sync: When user is authenticated, sync consultation history with Supabase Cloud
+  useEffect(() => {
+    if (user?.id) {
+      syncChatSessionsWithCloud(user.id, sessions).then((merged) => {
+        if (merged && merged.length > 0) {
+          setSessions(merged);
+        }
+      });
+    }
+  }, [user?.id]);
+
   // Save active session id
   useEffect(() => {
     localStorage.setItem(ACTIVE_SESSION_KEY, currentSessionId);
@@ -290,6 +315,10 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
 
     const remaining = sessions.filter((s) => s.id !== sessionId);
     setSessions(remaining);
+
+    if (user?.id) {
+      deleteCloudChatSession(user.id, sessionId);
+    }
 
     if (currentSessionId === sessionId) {
       if (remaining.length > 0) {
@@ -447,12 +476,17 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
         try {
           const medRes = await fetch('/api/medicine/identify', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              ...(geminiKey ? { 'x-gemini-key': geminiKey } : {}),
+              ...(openRouterKey ? { 'x-openrouter-key': openRouterKey } : {})
+            },
             body: JSON.stringify({
               image: photo,
               language: chatLanguage,
               additionalNotes: queryText,
               medicineHint: medicineHint,
+              geminiApiKey: geminiKey,
               openRouterApiKey: openRouterKey,
               model: selectedModel
             })
@@ -480,11 +514,16 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
           // Fallback to chat endpoint with image
           const chatRes = await fetch('/api/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              ...(geminiKey ? { 'x-gemini-key': geminiKey } : {}),
+              ...(openRouterKey ? { 'x-openrouter-key': openRouterKey } : {})
+            },
             body: JSON.stringify({
               message: queryText || 'Please examine this medicine image',
               image: photo,
               language: chatLanguage,
+              geminiApiKey: geminiKey,
               openRouterApiKey: openRouterKey,
               model: selectedModel
             })
@@ -502,16 +541,24 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
         // Case 2: Clinical text consultation
         const response = await fetch('/api/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            ...(geminiKey ? { 'x-gemini-key': geminiKey } : {}),
+            ...(openRouterKey ? { 'x-openrouter-key': openRouterKey } : {})
+          },
           body: JSON.stringify({
             message: queryText,
             language: chatLanguage,
+            geminiApiKey: geminiKey,
             openRouterApiKey: openRouterKey,
             model: selectedModel
           }),
         });
 
-        if (!response.ok) throw new Error('Network error');
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || errData.response || 'Network error');
+        }
         const data = await response.json();
 
         const isEmergency = 
@@ -552,6 +599,10 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
           hasImage: Boolean(photo || (existingIndex >= 0 && prevSessions[existingIndex].hasImage)),
           messages: updatedMessages
         };
+
+        if (user?.id) {
+          saveCloudChatSession(user.id, updatedSession);
+        }
 
         if (existingIndex >= 0) {
           const clone = [...prevSessions];
@@ -765,18 +816,19 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
       {/* Main Gemini Shell Container */}
       <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-3xl shadow-xl overflow-hidden flex flex-col h-[calc(100dvh-130px)] min-h-[580px] max-h-[920px]">
         
-        {/* Gemini Top App Bar */}
-        <div className="h-14 sm:h-16 px-3 sm:px-6 border-b border-neutral-200/80 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0 bg-white/90 dark:bg-neutral-900/90 backdrop-blur-md">
-          <div className="flex items-center gap-2 sm:gap-3">
+        {/* Gemini / ChatGPT Style Sleek Top App Bar */}
+        <div className="h-14 sm:h-16 px-2.5 sm:px-6 border-b border-neutral-200/80 dark:border-neutral-800 flex items-center justify-between gap-1.5 sm:gap-3 shrink-0 bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md">
+          {/* Left: History Sidebar Toggle + Clean Single-Line Title & Model Pill */}
+          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
             {/* Sidebar Toggle Button for History Chat */}
             <button
               onClick={() => setIsSidebarOpen((prev) => !prev)}
-              className="p-2 px-2.5 rounded-xl text-neutral-600 dark:text-neutral-300 hover:text-black dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer flex items-center gap-1.5 border border-neutral-200/70 dark:border-neutral-700/70 text-xs font-medium"
+              className="p-2 sm:px-2.5 rounded-xl text-neutral-600 dark:text-neutral-300 hover:text-black dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer flex items-center gap-1 sm:gap-1.5 border border-neutral-200/70 dark:border-neutral-700/70 text-xs font-medium shrink-0"
               title={isSidebarOpen ? 'Hide consultation history' : 'Open consultation history'}
               type="button"
             >
               {isSidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeft className="w-4 h-4" />}
-              <span className="font-myanmar hidden sm:inline">
+              <span className="font-myanmar hidden md:inline">
                 {chatLanguage === 'my' ? 'မှတ်တမ်း' : 'History'}
               </span>
               {(sessions.length > 0 || storedConsultations.length > 0) && (
@@ -786,98 +838,149 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
               )}
             </button>
 
-            {/* Gemini Brand & Model Selector */}
-            <div className="flex items-center gap-2">
-              <span className="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 tracking-tight font-myanmar">
-                {chatLanguage === 'my' ? 'အိမ်တွင်းကုသမှုအကြံပေး' : 'Home Treatment Advisor'}
+            {/* Clean Single-Line Title */}
+            <div className="flex items-center gap-1 sm:gap-2 min-w-0">
+              <span className="text-sm sm:text-base lg:text-lg font-bold text-neutral-900 dark:text-neutral-100 tracking-tight font-myanmar whitespace-nowrap">
+                {chatLanguage === 'my' ? 'AI ဆရာဝန်' : 'AI Doctor'}
+              </span>
+              <span className="text-xs text-neutral-500 dark:text-neutral-400 font-myanmar whitespace-nowrap hidden sm:inline">
+                {chatLanguage === 'my' ? '• အိမ်တွင်းကုသမှု' : '• Advisor'}
               </span>
 
-              {/* Minimal Model Badge / Config Trigger (Admin Only) */}
-              {isAdmin && (
-                <button
-                  onClick={() => setShowConfig((prev) => !prev)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200/70 dark:hover:bg-neutral-700/70 text-neutral-600 dark:text-neutral-300 text-xs font-medium transition-colors cursor-pointer"
-                  title="Model Settings (Admin)"
-                  type="button"
-                >
-                  <Sparkles className="w-3 h-3 text-purple-500" />
-                  <span className="text-[11px] font-mono">Gemini 2.5</span>
-                  <SlidersHorizontal className="w-3 h-3 opacity-60" />
-                </button>
-              )}
+              {/* Model & AI Key Settings Pill */}
+              <button
+                onClick={() => setShowConfig((prev) => !prev)}
+                className="inline-flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200/70 dark:hover:bg-neutral-700/70 text-neutral-700 dark:text-neutral-300 text-xs font-medium transition-colors cursor-pointer border border-neutral-200 dark:border-neutral-700 shrink-0"
+                title={chatLanguage === 'my' ? 'AI ဆက်တင်များ' : 'AI Model & Settings'}
+                type="button"
+              >
+                <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span className="text-[11px] font-bold max-w-[65px] sm:max-w-none truncate">
+                  {geminiKey ? 'Gemini' : openRouterKey ? 'OpenRouter' : (chatLanguage === 'my' ? 'ဆက်တင်' : 'Settings')}
+                </span>
+                <SlidersHorizontal className="w-2.5 h-2.5 opacity-60 shrink-0" />
+              </button>
             </div>
           </div>
 
-          {/* Top Right Controls */}
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Right: New Chat & Language Controls */}
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             {/* New Chat Button */}
             <button
               onClick={handleStartNewChat}
               className="p-2 sm:px-3 sm:py-1.5 rounded-full bg-neutral-100 hover:bg-neutral-200/70 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-200 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer font-myanmar"
               type="button"
-              title="Start new chat"
+              title={chatLanguage === 'my' ? 'ဆွေးနွေးမှုအသစ်' : 'Start new chat'}
             >
               <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">{chatLanguage === 'my' ? 'အသစ်' : 'New Chat'}</span>
+              <span className="hidden md:inline">{chatLanguage === 'my' ? 'အသစ်' : 'New Chat'}</span>
             </button>
 
             {/* Myanmar / English Language Switcher */}
             <button
               onClick={() => setChatLanguage((prev) => (prev === 'en' ? 'my' : 'en'))}
-              className="px-2.5 py-1.5 rounded-full text-xs font-semibold text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer flex items-center gap-1 border border-neutral-200 dark:border-neutral-700"
+              className="h-8 px-2 sm:px-2.5 rounded-full text-xs font-semibold text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer flex items-center gap-1 border border-neutral-200 dark:border-neutral-700"
               type="button"
-              title="Toggle Myanmar / English"
+              title="Toggle Language"
             >
               <Languages className="w-3.5 h-3.5" />
-              <span>{chatLanguage === 'my' ? 'မြန်မာ' : 'EN'}</span>
+              <span className="font-bold">{chatLanguage === 'my' ? 'မြန်မာ' : 'EN'}</span>
             </button>
           </div>
         </div>
 
-        {/* AI Key Configuration Bar (Collapsible - Admin Only) */}
-        {isAdmin && showConfig && (
+        {/* AI Key Configuration Bar (Collapsible) */}
+        {showConfig && (
           <div className="p-4 bg-neutral-50 dark:bg-neutral-950 border-b border-neutral-200 dark:border-neutral-800 animate-in fade-in duration-150">
-            <div className="max-w-3xl mx-auto flex flex-col sm:flex-row items-center gap-3">
-              <div className="flex-1 w-full">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-600 dark:text-neutral-400">
-                    Admin OpenRouter Key Override (Optional)
-                  </label>
+            <div className="max-w-3xl mx-auto space-y-3">
+              <div className="flex items-center justify-between pb-1 border-b border-neutral-200 dark:border-neutral-800">
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span className="text-xs font-bold text-black dark:text-white font-myanmar">
+                    {chatLanguage === 'my' ? 'AI ဆေးပညာရှင် ဆက်တင်များ' : 'AI Doctor API Configuration'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleResetApiKeys}
+                    className="text-[11px] font-bold text-neutral-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition font-myanmar cursor-pointer flex items-center gap-1"
+                    title="Reset custom keys to system defaults"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>{chatLanguage === 'my' ? 'မူလ System Key သုံးမည်' : 'Reset to System Default'}</span>
+                  </button>
                   <button 
                     onClick={() => setShowConfig(false)}
-                    className="text-xs text-neutral-400 hover:text-black dark:hover:text-white cursor-pointer"
+                    className="text-xs text-neutral-400 hover:text-black dark:hover:text-white cursor-pointer px-2 py-0.5"
                   >
                     ✕
                   </button>
                 </div>
-                <input
-                  type="password"
-                  value={openRouterKey}
-                  onChange={(e) => {
-                    setOpenRouterKey(e.target.value);
-                    localStorage.setItem('tmhip_openrouter_key', e.target.value);
-                  }}
-                  placeholder="sk-or-v1-..."
-                  className="w-full px-3 py-1.5 rounded-lg text-xs border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-black dark:text-white focus:outline-none"
-                />
               </div>
-              <div className="w-full sm:w-60">
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-600 dark:text-neutral-400 mb-1">
-                  Model
-                </label>
-                <select
-                  value={selectedModel}
-                  onChange={(e) => {
-                    setSelectedModel(e.target.value);
-                    localStorage.setItem('tmhip_openrouter_model', e.target.value);
-                  }}
-                  className="w-full px-2.5 py-1.5 rounded-lg text-xs border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-black dark:text-white"
-                >
-                  <option value="google/gemini-2.5-flash">Gemini 2.5 Flash (Fast & Clinical)</option>
-                  <option value="google/gemini-2.5-pro">Gemini 2.5 Pro (Deep Reasoning)</option>
-                  <option value="deepseek/deepseek-chat">DeepSeek V3</option>
-                  <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-                </select>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Gemini API Key */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
+                      <span>Google Gemini API Key</span>
+                      <span className="px-1.5 py-0.2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[9px] font-extrabold">Recommended / Free</span>
+                    </label>
+                  </div>
+                  <input
+                    type="password"
+                    value={geminiKey}
+                    onChange={(e) => {
+                      setGeminiKey(e.target.value);
+                      localStorage.setItem('tmhip_gemini_key', e.target.value);
+                    }}
+                    placeholder="AIzaSy..."
+                    className="w-full px-3 py-1.5 rounded-lg text-xs border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-black dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                  />
+                  <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-1">
+                    {chatLanguage === 'my' 
+                      ? 'Google AI Studio (aistudio.google.com) မှ အခမဲ့ API key ရယူ၍ ထည့်သွင်းနိုင်ပါသည်။' 
+                      : 'Get a free API key at aistudio.google.com for live clinical AI reasoning & photo scanning.'}
+                  </p>
+                </div>
+
+                {/* OpenRouter API Key */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+                      OpenRouter API Key (Optional)
+                    </label>
+                  </div>
+                  <input
+                    type="password"
+                    value={openRouterKey}
+                    onChange={(e) => {
+                      setOpenRouterKey(e.target.value);
+                      localStorage.setItem('tmhip_openrouter_key', e.target.value);
+                    }}
+                    placeholder="sk-or-v1-..."
+                    className="w-full px-3 py-1.5 rounded-lg text-xs border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-black dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                  />
+                  <div className="mt-1 flex items-center justify-between">
+                    <span className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate max-w-[140px]">
+                      {selectedModel}
+                    </span>
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => {
+                        setSelectedModel(e.target.value);
+                        localStorage.setItem('tmhip_openrouter_model', e.target.value);
+                      }}
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-black dark:text-white"
+                    >
+                      <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
+                      <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
+                      <option value="deepseek/deepseek-chat">DeepSeek V3</option>
+                      <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+                    </select>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1067,12 +1170,34 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                   {/* Clean Greeting */}
                   <h1 className="text-3xl sm:text-4xl lg:text-5xl font-semibold tracking-tight leading-tight font-myanmar">
                     <span className="bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 dark:from-emerald-400 dark:via-teal-300 dark:to-emerald-400 bg-clip-text text-transparent font-extrabold">
-                      {chatLanguage === 'my' ? 'အိမ်တွင်းကုသမှုအကြံပေး' : 'Home Treatment Advisor'}
+                      {chatLanguage === 'my' ? 'အိမ်တွင်းကုသမှုအကြံပေး AI' : 'AI Health & Treatment Advisor'}
                     </span>
                   </h1>
                   <p className="text-base sm:text-lg text-neutral-500 dark:text-neutral-400 mt-2 mb-6 font-myanmar font-normal">
                     {chatLanguage === 'my' ? 'ကျန်းမာရေးနှင့် ဆေးဝါးများအကြောင်း မေးမြန်းရန် ရှာဖွေပါ...' : 'Search medicines, symptoms, or ask health questions...'}
                   </p>
+
+                  {/* Doctor AI Warm Welcome Message Card */}
+                  <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-emerald-500/10 via-teal-500/10 to-purple-500/10 border border-emerald-500/20 text-left mb-6 shadow-xs">
+                    <div className="flex items-center gap-2.5 mb-2">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                        <Bot className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h2 className="font-extrabold text-sm sm:text-base text-neutral-900 dark:text-white font-myanmar leading-tight">
+                          {chatLanguage === 'my' ? 'မင်္ဂလာပါ... ShowCare AI ဆရာဝန်မှ ကြိုဆိုပါသည်' : 'Welcome to ShowCare AI Health Advisor'}
+                        </h2>
+                        <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-bold font-myanmar">
+                          {chatLanguage === 'my' ? 'မြန်မာ့ရိုးရာတိုင်းရင်းဆေးနှင့် အိမ်တွင်းကုသမှု လမ်းညွှန်' : 'Myanmar Traditional Medicine & Home Health Guide'}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-xs sm:text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed font-myanmar">
+                      {chatLanguage === 'my'
+                        ? 'ကျွန်ုပ်သည် သင့်ကျန်းမာရေးအတွက် အိမ်တွင်းကုထုံးများ၊ သဘာဝဆေးဖက်ဝင်အပင်များနှင့် ဆေးဝါးသောက်သုံးပုံများကို အချိန်မရွေး အခမဲ့ ဆွေးနွေးဖြေကြားပေးမည့် AI ဆရာဝန် ဖြစ်ပါသည်။ သင့်တွင် ခံစားနေရသော ရောဂါလက္ခဏာများကို စာဖြင့် မေးမြန်းနိုင်သလို ဆေးဝါးဓာတ်ပုံကိုလည်း ကင်မရာဖြင့် ရိုက်ကူးစစ်ဆေးနိုင်ပါသည်။'
+                        : 'I am here to guide you with safe home remedies, Myanmar traditional herbs, and elderly medication safety. Feel free to ask about your symptoms or upload a medicine photo to get started.'}
+                    </p>
+                  </div>
 
                   {/* PROMINENT DOCTOR AI SEARCH BAR */}
                   <div className="w-full mb-8 text-left">
@@ -1226,73 +1351,42 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                       </div>
                     </div>
 
-                  </div>
-
-                  {/* Client-Requested Prompt Suggestions Section */}
-                  <div className="mt-6 text-left space-y-4">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 font-myanmar">
-                        {chatLanguage === 'my' ? 'လူသုံးအများဆုံး အကြံပြုမေးခွန်းများ (Prompt Suggestions)' : 'Client-Requested Prompt Suggestions'}
-                      </h3>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {CLIENT_PROMPT_SUGGESTIONS.map((cat) => (
-                        <div
-                          key={cat.id}
-                          className="p-3.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200/80 dark:border-neutral-800 shadow-2xs space-y-2 font-myanmar"
-                        >
-                          <div className="flex items-center justify-between pb-1.5 border-b border-neutral-100 dark:border-neutral-800">
-                            <span className="text-xs font-bold text-neutral-900 dark:text-neutral-100 flex items-center gap-1.5">
-                              <span>{cat.id === 'chronic-senior' ? '🩺' : cat.id === 'herbal-monographs' ? '🌿' : cat.id === 'emergency-firstaid' ? '🚨' : '🤒'}</span>
-                              <span>{chatLanguage === 'my' ? cat.categoryNameMy : cat.categoryNameEn}</span>
-                            </span>
-                          </div>
-
-                          <div className="flex flex-wrap gap-1.5 pt-1">
-                            {cat.prompts.map((p, pIdx) => {
-                              const label = chatLanguage === 'my' ? p.labelMy : p.labelEn;
-                              const query = chatLanguage === 'my' ? p.queryMy : p.queryEn;
-                              return (
-                                <button
-                                  key={pIdx}
-                                  onClick={() => handleSendMessage(query)}
-                                  className="text-left px-2.5 py-1 rounded-xl text-xs bg-neutral-50 dark:bg-neutral-800/80 hover:bg-purple-50 dark:hover:bg-purple-950/40 text-neutral-800 dark:text-neutral-200 border border-neutral-200/60 dark:border-neutral-700/60 hover:border-purple-300 dark:hover:border-purple-700 transition-colors font-medium cursor-pointer"
-                                  type="button"
-                                >
-                                  • {label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Saved Consultations Chips (Mapped from history prop) */}
-                  {storedConsultations.length > 0 && (
-                    <div className="mt-8 pt-6 border-t border-neutral-200/60 dark:border-neutral-800/60 text-left">
-                      <p className="text-xs font-semibold text-neutral-400 dark:text-neutral-500 uppercase tracking-wider mb-2.5 font-myanmar">
-                        {chatLanguage === 'my' ? 'ယခင် ဆေးဆွေးနွေးမှု မှတ်တမ်းများ' : 'Saved Consultations'}
+                    {/* Curated Bento Prompt Suggestions */}
+                    <div className="w-full text-left mt-6">
+                      <p className="text-xs font-bold text-neutral-500 dark:text-neutral-400 uppercase tracking-wider mb-3 font-myanmar flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <span>{chatLanguage === 'my' ? 'အမေးများသော ကျန်းမာရေး ခေါင်းစဉ်များ (၁-ချက်နှိပ် မေးမြန်းရန်)' : 'Popular Topics to Ask (1-Click to Start)'}</span>
                       </p>
-                      <div className="flex flex-wrap gap-2">
-                        {storedConsultations.map((consult) => (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {bentoCards.map((card, idx) => (
                           <button
-                            key={consult.id}
-                            onClick={() => handleRevisitConsultation(consult)}
+                            key={idx}
                             type="button"
-                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white dark:bg-neutral-800/90 border border-neutral-200/80 dark:border-neutral-700/80 text-xs text-neutral-700 dark:text-neutral-300 hover:border-purple-400 hover:text-black dark:hover:text-white transition-colors cursor-pointer shadow-2xs font-myanmar"
+                            onClick={card.action}
+                            className="p-3.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200/80 dark:border-neutral-800 hover:border-emerald-500/60 dark:hover:border-emerald-400/60 shadow-2xs hover:shadow-sm transition-all text-left flex items-start gap-3 cursor-pointer group active:scale-98"
                           >
-                            <span>{consult.medicineResult ? '💊' : '🩺'}</span>
-                            <span className="max-w-[200px] truncate">{consult.title}</span>
-                            <ChevronRight className="w-3 h-3 text-neutral-400" />
+                            <div className="w-9 h-9 rounded-xl bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                              {card.icon}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1 mb-0.5">
+                                <span className="font-bold text-xs sm:text-sm text-neutral-900 dark:text-white font-myanmar group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors truncate">
+                                  {card.title}
+                                </span>
+                                <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-neutral-100 dark:bg-neutral-800 text-neutral-500 font-mono shrink-0">
+                                  {card.badge}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 font-myanmar line-clamp-2 leading-relaxed">
+                                {card.subtitle}
+                              </p>
+                            </div>
                           </button>
                         ))}
                       </div>
                     </div>
-                  )}
+
+                  </div>
                 </div>
               ) : (
                 /* Active Message Stream: Gemini Borderless Aesthetic */
@@ -1321,40 +1415,57 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
 
                     if (isUser) {
                       return (
-                        <div key={msg.id} className="flex justify-end w-full">
-                          <div className="flex flex-col items-end max-w-[85%] sm:max-w-[75%]">
+                        <div key={msg.id} className="flex justify-end w-full group py-1">
+                          <div className="flex flex-col items-end max-w-[85%] sm:max-w-[75%] md:max-w-[68%]">
                             {msg.image && (
-                              <div className="mb-2 relative group cursor-pointer" onClick={() => setEnlargedImage(msg.image || null)}>
+                              <div 
+                                className="mb-2 relative group cursor-pointer overflow-hidden rounded-2xl border border-neutral-200/80 dark:border-neutral-700/80 shadow-xs" 
+                                onClick={() => setEnlargedImage(msg.image || null)}
+                              >
                                 <img
                                   src={msg.image}
                                   alt="Attached query"
-                                  className="w-48 sm:w-56 h-36 sm:h-40 object-cover rounded-2xl border border-neutral-200 dark:border-neutral-700 shadow-2xs group-hover:opacity-95 transition-opacity"
+                                  className="w-48 sm:w-60 max-h-56 object-cover rounded-2xl group-hover:scale-[1.02] transition-transform duration-200"
                                 />
+                                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                  <span className="text-[11px] text-white bg-black/70 px-2.5 py-1 rounded-full font-mono backdrop-blur-xs">🔍 Zoom</span>
+                                </div>
                               </div>
                             )}
-                            <div className="bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 px-4 sm:px-5 py-3 rounded-2xl rounded-tr-xs text-xs sm:text-sm font-myanmar leading-relaxed">
+                            {/* ChatGPT / Gemini User Bubble */}
+                            <div className="bg-neutral-100 dark:bg-neutral-800/95 comfort:bg-[#f0e6d2] text-neutral-900 dark:text-neutral-100 comfort:text-[#231f1a] px-4 sm:px-5 py-3 rounded-3xl rounded-tr-sm text-xs sm:text-sm font-myanmar leading-relaxed shadow-xs border border-neutral-200/60 dark:border-neutral-700/60 comfort:border-[#ded4c1]">
                               {msg.text}
                             </div>
-                            <span className="text-[10px] text-neutral-400 mt-1 px-1 font-mono">
-                              {msg.timestamp}
+                            <span className="text-[10px] text-neutral-400 dark:text-neutral-500 mt-1 px-1 font-mono flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                              <span>{msg.timestamp}</span>
                             </span>
                           </div>
                         </div>
                       );
                     }
 
-                    // Assistant Message (Gemini Borderless Style)
+                    // Assistant Message (Gemini / ChatGPT Minimalist Style)
                     return (
-                      <div key={msg.id} className="flex gap-3 sm:gap-4 justify-start w-full">
-                        {/* Sparkles Avatar */}
-                        <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-2xs mt-0.5">
-                          <Sparkles className="w-3.5 h-3.5" />
+                      <div key={msg.id} className="flex gap-3 sm:gap-4 justify-start w-full group py-2">
+                        {/* Iridescent AI Avatar */}
+                        <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs ring-2 ring-indigo-500/20 mt-0.5">
+                          <Sparkles className="w-4 h-4 text-white animate-pulse" />
                         </div>
 
-                        <div className="flex-1 min-w-0 space-y-3">
+                        <div className="flex-1 min-w-0 space-y-2.5">
+                          {/* Assistant Header Line */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-neutral-900 dark:text-neutral-100 font-myanmar">
+                              {chatLanguage === 'my' ? 'AI ဆေးပညာရှင်' : 'AI Doctor'}
+                            </span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 border border-neutral-200/60 dark:border-neutral-700/60">
+                              {selectedModel.split('/').pop() || 'Gemini 2.5'}
+                            </span>
+                          </div>
+
                           {/* Emergency Alert Banner */}
                           {msg.isEmergencyAlert && (
-                            <div className="p-3 rounded-2xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-red-700 dark:text-red-400 text-xs font-medium flex items-center gap-2.5 font-myanmar">
+                            <div className="p-3.5 rounded-2xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-red-700 dark:text-red-400 text-xs font-medium flex items-center gap-2.5 font-myanmar shadow-xs">
                               <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" />
                               <div>
                                 {chatLanguage === 'my' 
@@ -1372,58 +1483,39 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                               onConsultAiDoctor={(query) => handleSendMessage(query)}
                             />
                           ) : (
-                            /* Clean Assistant Text */
-                            <div className="text-xs sm:text-sm leading-relaxed text-neutral-800 dark:text-neutral-200 font-myanmar space-y-2">
-                              {msg.text.split('\n').map((line, lIdx) => {
-                                if (line.startsWith('**') && line.endsWith('**')) {
-                                  return (
-                                    <p key={lIdx} className="font-semibold text-sm sm:text-base text-neutral-950 dark:text-neutral-100 pt-1">
-                                      {line.replace(/\*\*/g, '')}
-                                    </p>
-                                  );
-                                }
-                                if (line.startsWith('- ') || line.startsWith('• ')) {
-                                  return (
-                                    <div key={lIdx} className="flex items-start gap-2 pl-2">
-                                      <span className="text-purple-500 font-bold">•</span>
-                                      <span>{line.replace(/^[-•]\s*/, '')}</span>
-                                    </div>
-                                  );
-                                }
-                                return <p key={lIdx}>{line}</p>;
-                              })}
+                            /* Structured Markdown AI Doctor Response */
+                            <div className="text-neutral-900 dark:text-neutral-100 comfort:text-[#231f1a] font-myanmar leading-relaxed">
+                              <MarkdownRenderer content={msg.text} />
                             </div>
                           )}
 
-                          {/* Minimal Action Toolbar */}
-                          <div className="flex items-center gap-1 text-neutral-400 pt-0.5">
-                            {/* Copy */}
+                          {/* ChatGPT / Gemini Style Action Toolbar */}
+                          <div className="flex items-center gap-1.5 text-neutral-400 dark:text-neutral-500 pt-1">
                             <button
                               onClick={() => copyToClipboard(msg.text, msg.id)}
-                              className="p-1.5 rounded-lg text-xs hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
-                              title="Copy"
+                              className="p-1.5 rounded-lg text-xs hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                              title="Copy response"
                               type="button"
                             >
-                              {copiedId === msg.id ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                              {copiedId === msg.id ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                             </button>
 
-                            {/* Like / Helpful */}
                             <button
                               onClick={() => {
                                 setMessages((prev) => 
                                   prev.map((m) => m.id === msg.id ? { ...m, liked: !m.liked } : m)
                                 );
                               }}
-                              className={`p-1.5 rounded-lg hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer ${
+                              className={`p-1.5 rounded-lg text-xs hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer ${
                                 msg.liked ? 'text-purple-600 dark:text-purple-400' : ''
                               }`}
                               title="Helpful"
                               type="button"
                             >
-                              <ThumbsUp className="w-4 h-4" />
+                              <ThumbsUp className="w-3.5 h-3.5" />
                             </button>
 
-                            <span className="text-[10px] text-neutral-400 ml-2 font-mono">
+                            <span className="text-[10px] text-neutral-400 dark:text-neutral-500 ml-2 font-mono">
                               {msg.timestamp}
                             </span>
                           </div>
@@ -1436,20 +1528,21 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                               : getTopicSuggestions(prevUserMsg?.text || '', msg.text, chatLanguage === 'my');
 
                             return (
-                              <div className="mt-3 pt-2.5 border-t border-neutral-200/80 dark:border-neutral-800 space-y-2 font-myanmar">
-                                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 dark:text-emerald-300">
-                                  <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 animate-pulse" />
-                                  <span>{chatLanguage === 'my' ? 'ဆက်လက်မေးမြန်းနိုင်သော မေးခွန်းများ (Prompt Suggestions):' : 'Suggested Follow-up Questions:'}</span>
+                              <div className="mt-3 pt-3 border-t border-neutral-100 dark:border-neutral-800/80 space-y-2 font-myanmar">
+                                <div className="flex items-center gap-1.5 text-xs font-semibold text-neutral-600 dark:text-neutral-400">
+                                  <Sparkles className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400 animate-pulse" />
+                                  <span>{chatLanguage === 'my' ? 'ဆက်လက်မေးမြန်းနိုင်သော မေးခွန်းများ:' : 'Suggested follow-ups:'}</span>
                                 </div>
-                                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                <div className="flex flex-wrap gap-2 pt-0.5">
                                   {topicSuggestions.map((sug, sIdx) => (
                                     <button
                                       key={sIdx}
                                       type="button"
                                       onClick={() => handleSendMessage(sug)}
-                                      className="text-left px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-emerald-50 hover:text-emerald-900 dark:bg-neutral-800/80 dark:hover:bg-emerald-950/60 dark:hover:text-emerald-200 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 text-xs font-semibold transition-all cursor-pointer font-myanmar hover:border-emerald-500/40"
+                                      className="text-left px-3.5 py-1.5 rounded-full bg-neutral-50 hover:bg-neutral-100 dark:bg-neutral-800/60 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border border-neutral-200/80 dark:border-neutral-700/80 text-xs font-medium transition-all hover:border-neutral-400 dark:hover:border-neutral-500 hover:scale-[1.01] cursor-pointer font-myanmar flex items-center gap-1.5 shadow-2xs"
                                     >
-                                      💡 {sug}
+                                      <span className="text-indigo-500 font-bold">•</span>
+                                      <span>{sug}</span>
                                     </button>
                                   ))}
                                 </div>

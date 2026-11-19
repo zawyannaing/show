@@ -2,205 +2,112 @@ import React, { useState, useEffect } from 'react';
 import { 
   Activity, 
   Search, 
-  Plus, 
   Sparkles, 
   AlertTriangle, 
   CheckCircle2, 
   Leaf, 
   ShieldAlert, 
-  Stethoscope, 
   ChevronRight, 
   X, 
-  Save, 
-  Trash2,
-  HelpCircle,
-  Pill,
-  HeartPulse,
-  Thermometer
+  Copy, 
+  Check, 
+  Share2,
+  Thermometer,
+  ArrowRight,
+  Stethoscope,
+  Heart,
+  Wind,
+  Utensils,
+  Droplets,
+  Smile,
+  Brain
 } from 'lucide-react';
 import { CustomSymptomRemedy } from '../types';
 import { getManagedSymptoms } from '../lib/contentManager';
+import { useAuth } from '../hooks/useAuth';
+import { getLocalBookmarks, toggleBookmark, syncBookmarksWithCloud, BookmarkItem } from '../lib/userCloudSync';
 
 export interface SymptomsRemediesProps {
   language: 'en' | 'my';
   onConsultAdvisor?: (prompt: string) => void;
 }
 
-const CUSTOM_STORAGE_KEY = 'tmhip_custom_symptom_remedies';
-
-const PRESET_SYMPTOMS: CustomSymptomRemedy[] = [
-  {
-    id: 'sym-1',
-    symptomName: 'Runny Nose / Cold',
-    symptomNameMy: 'နှာစီးခြင်း နှင့် အအေးမိခြင်း',
-    category: 'respiratory',
-    categoryMy: 'အသက်ရှူလမ်းကြောင်း',
-    description: 'Nasal congestion, watery rhinorrhea, sneezes, and mild throat irritation.',
-    descriptionMy: 'နှာရည်ယိုခြင်း၊ နှာပိတ်ခြင်း၊ နှာချေခြင်းနှင့် လည်ချောင်း ယားယံခြင်း။',
-    remedies: [
-      'Ginger-Honey Tea: Boiled fresh ginger slice tea with 1 tsp wild honey taken 2-3 times daily.',
-      'Basil Steam Inhalation: Inhale steam from boiling water infused with fresh holy basil (ပင်စိမ်း) leaves.',
-      'Saltwater Gargle: Warm saltwater gargle twice daily to reduce pharyngeal inflammation.',
-      'Warm Hydration & Rest: Drink plenty of lukewarm boiled water; keep body warm.'
-    ],
-    remediesMy: [
-      'ချင်း-ပျားရည် ရေနွေးကြမ်း: ချင်းလက်တစ်ဆစ်ကို ပါးပါးလှီး၍ ရေဆူဆူတွင် ပြုတ်ပြီး ပျားရည်စစ်စစ် ၁ ဇွန်း ရော၍ တစ်နေ့ ၂-၃ ကြိမ် နွေးနွေးလေး သောက်သုံးပါ။',
-      'ပင်စိမ်းရွက် ရေနွေးငွေ့ ရှူခြင်း: ပင်စိမ်းရွက် ၇-၁၀ ရွက်ကို ရေနွေးဆူဆူတွင် ခတ်၍ ရေနွေးငွေ့ကို ၅ မိနစ်ခန့် ရှူပေးပါက နှာပိတ်ခြင်း သက်သာစေပါသည်။',
-      'ဆားနွေးရေဖြင့် လည်ချောင်း ပလုတ်ကျင်းခြင်း: ရေနွေးနွေးထဲသို့ ဆားအနည်းငယ်ထည့်၍ ပလုတ်ကျင်းပေးပါ။',
-      'ရေနွေးနွေး များများသောက်ပြီး ခန္ဓာကိုယ်ကို နွေးထွေးစွာ ထားရှိပါ။'
-    ],
-    precautions: [
-      'If high fever (>38.5°C) persists over 3 days or yellow-green purulent sputum develops, consult a doctor.',
-      'Do not take unprescribed antibiotics for viral common cold.'
-    ],
-    precautionsMy: [
-      'အဖျား ၃ ရက်ထက်ပို၍ ဖျားခြင်း၊ အသက်ရှူရ ခက်ခဲခြင်း ရှိပါက ဆရာဝန်နှင့် ချက်ချင်း ပြသပါ။',
-      'ဗိုင်းရပ်စ်ကြောင့် ဖြစ်သော အအေးမိခြင်းအတွက် ပဋိဇီဝဆေး (Antibiotics) များကို ဆရာဝန်ညွှန်ကြားချက်မရှိဘဲ မသောက်ပါနှင့်။'
-    ]
-  },
-  {
-    id: 'sym-2',
-    symptomName: 'Coughing',
-    symptomNameMy: 'ချောင်းဆိုးခြင်း',
-    category: 'respiratory',
-    categoryMy: 'အသက်ရှူလမ်းကြောင်း',
-    description: 'Dry or productive cough, bronchial irritation, and throat discomfort.',
-    descriptionMy: 'ချောင်းခြောက်ဆိုးခြင်း၊ သလိပ်ကပ်ခြင်းနှင့် ရင်ကျပ် လည်ချောင်းနာခြင်း။',
-    remedies: [
-      'Holy Basil & Honey: Fresh basil leaf juice mixed with pure honey relieves persistent dry cough.',
-      'Ginger & Lime Syrup: Fresh ginger juice with lime juice and honey soothes airway constriction.',
-      'Warm Saltwater Rinse: Soothes tickling throat sensation.',
-      'Steam Moisture: Use humidified room air or steam bath.'
-    ],
-    remediesMy: [
-      'ပင်စိမ်းနှင့် ပျားရည်: ပင်စိမ်းရွက် သန့်သန့် အရည်ညှစ်ပြီး ပျားရည်နှင့် ရောသောက်ပါက ချောင်းခြောက်ဆိုးခြင်းကို လျှင်မြန်စွာ သက်သာစေပါသည်။',
-      'ချင်း၊ သံပရာနှင့် ပျားရည်: ချင်းအရည်၊ သံပရာရည်နှင့် ပျားရည် ရောစပ်သောက်သုံးခြင်းက သလိပ်များကို ကင်းစင်စေပါသည်။',
-      'ရေနွေးနွေးတွင် ပျားရည်နှင့် သံပရာသီး ညှစ်သောက်ခြင်းက လည်ချောင်းနာခြင်းကို သက်သာစေပါသည်။'
-    ],
-    precautions: [
-      'Blood in sputum (hemoptysis) or breathlessness requires emergency clinical evaluation.'
-    ],
-    precautionsMy: [
-      'သလိပ်ထဲ သွေးပါခြင်း၊ ရင်ဘတ်အောင့်ခြင်း သို့မဟုတ် အသက်ရှူကျပ်ခြင်း ဖြစ်ပါက အရေးပေါ် ဆေးရုံသို့ သွားရောက်ပါ။'
-    ]
-  },
-  {
-    id: 'sym-3',
-    symptomName: 'Stomach Ache / Digestion',
-    symptomNameMy: 'ဗိုက်အောင့်ခြင်း နှင့် အစာမကြေခြင်း',
-    category: 'digestive',
-    categoryMy: 'အစာခြေစနစ်',
-    description: 'Abdominal colic, bloating, gas pain, indigestion, and mild nausea.',
-    descriptionMy: 'လေထိုးလေအောင့်ခြင်း၊ အစာမကြေခြင်း၊ ဗိုက်ကယ်ခြင်းနှင့် ပျို့အန်ချင်ခြင်း။',
-    remedies: [
-      'Boiled Ginger Infusion: 5-10g sliced ginger root in boiling water speeds gastric emptying.',
-      'Mint / Peppermint Tea: Calms intestinal spasms and gas bloating.',
-      'Warm Water Compress: Place warm water pouch on upper abdomen.',
-      'Bland Diet: Eat light soft rice porridge (ဆန်ပြုတ်) and avoid spicy/oily foods.'
-    ],
-    remediesMy: [
-      'ချင်းရေနွေးကြမ်း: ချင်းပါးပါးလှီး စိမ်ထားသော ရေနွေးကြမ်း သောက်ပေးပါက လေထိုးလေအောင့်ခြင်းနှင့် အစာမကြေခြင်းကို လျှင်မြန်စွာ သက်သာစေပါသည်။',
-      'ပူဒီနာရွက် / စပလင်: ပူဒီနာရွက် သို့မဟုတ် စပလင် ပြုတ်ရည် သောက်ပေးခြင်းက လေပွခြင်းကို သက်သာစေပါသည်။',
-      'ဗိုက်ပေါ်သို့ ရေနွေးဝတ် ကပ်ပေးခြင်း သို့မဟုတ် ရေနွေးအိတ် တင်ပေးပါ။',
-      'ဆန်ပြုတ်ပျော့ပျော့ သောက်ပြီး အဆီအစိမ့်နှင့် စေတနာလွန် အစပ်စာများကို ရှောင်ကြဉ်ပါ။'
-    ],
-    precautions: [
-      'Severe right lower abdominal pain (possible appendicitis) or black stool requires immediate hospital care.'
-    ],
-    precautionsMy: [
-      'ညာဘက်ဝမ်းဗိုက်အောက်ပိုင်း စူးရှစွာ အောင့်ခြင်း (အတက်ရောင်ခြင်း) သို့မဟုတ် ဝမ်းအမည်းသွားခြင်း ဖြစ်ပါက ဆေးရုံသို့ ချက်ချင်းသွားပါ။'
-    ]
-  },
-  {
-    id: 'sym-4',
-    symptomName: 'Skin Issues / Rashes',
-    symptomNameMy: 'အရေပြားပြဿနာ နှင့် အဖုအပိမ့်များ',
-    category: 'dermatology',
-    categoryMy: 'အရေပြား',
-    description: 'Dermatitis, pruritus, heat rash, mild fungal patches, and skin irritation.',
-    descriptionMy: 'ယားယံခြင်း၊ အဖုအပိမ့်ထွက်ခြင်း၊ ယင်းထခြင်းနှင့် အရေပြားနီရဲ ရောင်ရမ်းခြင်း။',
-    remedies: [
-      'Neem (တမာရွက်) Decoction Wash: Boil fresh Neem leaves in water and use cooled water for skin wash.',
-      'Turmeric & Honey Paste: Apply topical turmeric paste on localized minor lesions for antibacterial relief.',
-      'Aloe Vera Gel: Pure Aloe Vera gel soothes sun rash and skin heat itching.',
-      'Clean Coconut Oil: Soothes dry scaly skin patches.'
-    ],
-    remediesMy: [
-      'တမာရွက်ပြုတ်ရည်ဖြင့် ဆေးကြောခြင်း: တမာရွက် ရေနွေးနွေး ပြုတ်ရည်ဖြင့် အရေပြား ယားယံသည့်နေရာများကို ဆေးကြောပေးပါက သဘာဝ ပိုးသတ်ပေးပါသည်။',
-      'နနွင်းနှင့် ပျားရည် လိမ်းပေးခြင်း: နနွင်းမှုန့်စစ်စစ်ကို ပျားရည်နှင့် ရော၍ ယားယံသော အဖုအပိမ့်များပေါ် သုတ်လိမ်းပေးနိုင်ပါသည်။',
-      'ရှားစောင်းလက်ပပ်: ရှားစောင်းလက်ပပ် အနှစ်ကို လိမ်းပေးခြင်းဖြင့် အရေပြား ပူလောင်ယားယံခြင်းကို သက်သာစေပါသည်။'
-    ],
-    precautions: [
-      'Spreading blistering rash, signs of severe systemic infection, or anaphylactic hives require medical consultation.'
-    ],
-    precautionsMy: [
-      'အရေပြား ရေကြည်ဖုများ ပြန့်နှံ့လာခြင်း သို့မဟုတ် တစ်ကိုယ်လုံး အင်ပြင်ထ အသက်ရှူကျပ်ပါက အရေးပေါ် ကုသမှု ခံယူပါ။'
-    ]
-  },
-  {
-    id: 'sym-5',
-    symptomName: 'Toothache',
-    symptomNameMy: 'သွားကိုက်ခြင်း',
-    category: 'dental',
-    categoryMy: 'သွားနှင့်ခံတွင်း',
-    description: 'Throbbing dental pain, gum swelling, and sensitivity to hot/cold.',
-    descriptionMy: 'သွားစူးရှစွာ ကိုက်ခြင်း၊ သွားဖုံးရောင်ခြင်းနှင့် အပူအအေး မခံနိုင်ခြင်း။',
-    remedies: [
-      'Clove (လေးညှင်းပွင့်) Application: Place a crushed clove or 1 drop clove oil on affected tooth.',
-      'Warm Saltwater Rinse: Swish warm saltwater for 30 seconds to cleanse bacteria.',
-      'Crushed Garlic & Salt: Topical garlic clove paste on cavity area provides mild analgesic effect.',
-      'Cold Cheek Compress: Apply ice pack wrapped in cloth on outside of cheek.'
-    ],
-    remediesMy: [
-      'လေးညှင်းပွင့် (Clove): လေးညှင်းပွင့် တစ်ပွင့်ကို သွားကိုက်သည့်နေရာတွင် ကိုက်ထားပါ သို့မဟုတ် လေးညှင်းဆီ ၁ စက် သုတ်လိမ်းပေးပါက သွားကိုက်ခြင်းကို သိသိသာသာ သက်သာစေပါသည်။',
-      'ဆားနွေးရေဖြင့် ခံတွင်း ပလုတ်ကျင်းခြင်း: ဆားနွေးရေဖြင့် တစ်နေ့ ၃-၄ ကြိမ် ပလုတ်ကျင်းပေးပါ။',
-      'ကြက်သွန်ဖြူနှင့် ဆား: ကြက်သွန်ဖြူကို ထောာင်း၍ ဆားအနည်းငယ်ရောပြီး ကိုက်သောသွားတွင် ကပ်ပေးနိုင်ပါသည်။',
-      'ပါးပြင်ပေါ်သို့ ရေခဲဝတ် ကပ်ပေးခြင်းဖြင့် ရောင်ရမ်းမှုကို လျှော့ချပါ။'
-    ],
-    precautions: [
-      'Facial swelling, high fever, or severe gum abscess requires professional dentist evaluation.'
-    ],
-    precautionsMy: [
-      'ပါးရောင်လာခြင်း၊ သွားဖုံးပြည်တည်ခြင်း သို့မဟုတ် ဖျားခြင်းဖြစ်ပါက သွားဆရာဝန်နှင့် အမြန်ဆုံး ပြသပါ။'
-    ]
-  },
-  {
-    id: 'sym-6',
-    symptomName: 'Headache',
-    symptomNameMy: 'ခေါင်းကိုက်ခြင်း',
-    category: 'neurological',
-    categoryMy: 'ဦးနှောက်နှင့်အာရုံကြော',
-    description: 'Tension headache, forehead throbbing, stress pressure, and mild migraine.',
-    descriptionMy: 'ဇတ်ကြောတက် ခေါင်းကိုက်ခြင်း၊ ငြီးစီစီ ဖြစ်ခြင်း၊ အလုပ်ပင်ပန်း၍ ခေါင်းအောင့်ခြင်း။',
-    remedies: [
-      'Ginger or Peppermint Tea: Warm ginger tea reduces neuro-vascular throbbing.',
-      'Cold / Warm Forehead Compress: Apply cool cloth on forehead or warm towel on neck.',
-      'Temple Essential Oil Massage: Lightly massage temples with peppermint or sandalwood oil.',
-      'Hydration & Dark Rest: Drink 2 glasses of water and rest in a dark, quiet room.'
-    ],
-    remediesMy: [
-      'ချင်းနွေးနွေး သို့မဟုတ် ပူဒီနာ ရေနွေးကြမ်း သောက်ပေးပါ။',
-      'နဖူးပေါ်သို့ ရေအေးဝတ် ကပ်ပေးခြင်း သို့မဟုတ် ဂုတ်ပိုးပေါ်သို့ ရေနွေးဝတ် တင်ပေးပါ။',
-      'နံ့သာဖြူ သို့မဟုတ် ပူဒီနာဆီဖြင့် နားထင်နှင့် ဂုတ်ပိုးကို ခပ်ဖွဖွ နှိပ်နယ်ပေးပါ။',
-      'ရေများများသောက်ပြီး ငြိမ်သက် မှောင်မိုက်သော အခန်းထဲတွင် ခဏ အနားယူပါ။'
-    ],
-    precautions: [
-      'Sudden "thunderclap" severe headache, stiff neck, vomiting, or confusion mandates emergency 192 call.'
-    ],
-    precautionsMy: [
-      'ရုတ်တရက် အလွန်ပြင်းထန်စွာ ခေါင်းကိုက်ခြင်း၊ ဇာတ်ခဲခြင်း၊ အန်ခြင်း သို့မဟုတ် သတိလစ်ချင်သလိုဖြစ်ပါက ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုပါ။'
-    ]
-  }
+const CATEGORIES_CONFIG = [
+  { id: 'all', labelMy: 'အားလုံး', labelEn: 'All', Icon: Sparkles },
+  { id: 'saved', labelMy: 'သိမ်းထားသည်များ', labelEn: 'Saved', Icon: Heart },
+  { id: 'respiratory', labelMy: 'အသက်ရှူလမ်းကြောင်း', labelEn: 'Respiratory', Icon: Wind },
+  { id: 'digestive', labelMy: 'အစာခြေစနစ်', labelEn: 'Digestive', Icon: Utensils },
+  { id: 'dermatology', labelMy: 'အရေပြား', labelEn: 'Skin', Icon: Droplets },
+  { id: 'dental', labelMy: 'သွားနှင့်ခံတွင်း', labelEn: 'Dental', Icon: Smile },
+  { id: 'neurological', labelMy: 'ဦးနှောက်နှင့်အာရုံကြော', labelEn: 'Neurology', Icon: Brain },
 ];
+
+const getCategoryTheme = (category: string) => {
+  switch (category) {
+    case 'respiratory':
+      return {
+        Icon: Wind,
+        badge: 'bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/20',
+        accentBorder: 'border-l-sky-500',
+        pillBg: 'bg-sky-500/15 text-sky-700 dark:text-sky-300',
+        iconColor: 'text-sky-500 dark:text-sky-400',
+      };
+    case 'digestive':
+      return {
+        Icon: Utensils,
+        badge: 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20',
+        accentBorder: 'border-l-amber-500',
+        pillBg: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
+        iconColor: 'text-amber-500 dark:text-amber-400',
+      };
+    case 'dermatology':
+      return {
+        Icon: Droplets,
+        badge: 'bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/20',
+        accentBorder: 'border-l-purple-500',
+        pillBg: 'bg-purple-500/15 text-purple-700 dark:text-purple-300',
+        iconColor: 'text-purple-500 dark:text-purple-400',
+      };
+    case 'dental':
+      return {
+        Icon: Smile,
+        badge: 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20',
+        accentBorder: 'border-l-teal-500',
+        pillBg: 'bg-teal-500/15 text-teal-700 dark:text-teal-300',
+        iconColor: 'text-teal-500 dark:text-teal-400',
+      };
+    case 'neurological':
+      return {
+        Icon: Brain,
+        badge: 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20',
+        accentBorder: 'border-l-indigo-500',
+        pillBg: 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-300',
+        iconColor: 'text-indigo-500 dark:text-indigo-400',
+      };
+    default:
+      return {
+        Icon: Leaf,
+        badge: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20',
+        accentBorder: 'border-l-emerald-500',
+        pillBg: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+        iconColor: 'text-emerald-500 dark:text-emerald-400',
+      };
+  }
+};
 
 export const SymptomsRemedies: React.FC<SymptomsRemediesProps> = ({ 
   language,
   onConsultAdvisor
 }) => {
+  const { user } = useAuth();
   const [allSymptoms, setAllSymptoms] = useState<CustomSymptomRemedy[]>(() => getManagedSymptoms());
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [activeItem, setActiveItem] = useState<CustomSymptomRemedy | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(() => {
+    const list = getLocalBookmarks();
+    return new Set(list.filter(b => b.itemType === 'remedy').map(b => b.itemId));
+  });
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -210,48 +117,102 @@ export const SymptomsRemedies: React.FC<SymptomsRemediesProps> = ({
     return () => window.removeEventListener('tmhip_content_updated', handleUpdate);
   }, []);
 
+  useEffect(() => {
+    if (user?.id) {
+      syncBookmarksWithCloud(user.id).then((cloudList) => {
+        setBookmarkedIds(new Set(cloudList.filter(b => b.itemType === 'remedy').map(b => b.itemId)));
+      });
+    }
 
+    const handleSync = (e: any) => {
+      const items: BookmarkItem[] = e.detail || getLocalBookmarks();
+      setBookmarkedIds(new Set(items.filter(b => b.itemType === 'remedy').map(b => b.itemId)));
+    };
+    window.addEventListener('showcare_bookmarks_changed', handleSync);
+    return () => window.removeEventListener('showcare_bookmarks_changed', handleSync);
+  }, [user?.id]);
+
+  const handleToggleBookmark = async (item: CustomSymptomRemedy) => {
+    const { isBookmarked } = await toggleBookmark(user?.id, {
+      itemType: 'remedy',
+      itemId: item.id,
+      title: item.symptomName,
+      titleMy: item.symptomNameMy,
+      category: item.category,
+      subtitle: item.descriptionMy
+    });
+
+    setBookmarkedIds(prev => {
+      const next = new Set(prev);
+      if (isBookmarked) next.add(item.id);
+      else next.delete(item.id);
+      return next;
+    });
+  };
+
+  const handleCopyRemedies = (item: CustomSymptomRemedy) => {
+    const title = language === 'my' ? item.symptomNameMy : item.symptomName;
+    const remedies = (language === 'my' ? item.remediesMy : item.remedies).join('\n• ');
+    const textToCopy = `【${title} - သဘာဝ ဆေးနည်းများ】\n• ${remedies}`;
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      setCopiedId(item.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    });
+  };
 
   const filteredList = allSymptoms.filter((item) => {
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
+      !q ||
       item.symptomNameMy.toLowerCase().includes(q) ||
       item.symptomName.toLowerCase().includes(q) ||
       item.descriptionMy.toLowerCase().includes(q) ||
       item.remediesMy.some((r) => r.toLowerCase().includes(q));
 
     const matchesCategory =
-      selectedCategory === 'all' || item.category === selectedCategory;
+      selectedCategory === 'all'
+        ? true
+        : selectedCategory === 'saved'
+        ? bookmarkedIds.has(item.id)
+        : item.category === selectedCategory;
 
     return matchesSearch && matchesCategory;
   });
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-in fade-in duration-200">
-      {/* Top Banner Header */}
-      <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-emerald-700 via-teal-700 to-emerald-800 text-white shadow-xl relative overflow-hidden">
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-white text-xs font-bold font-myanmar backdrop-blur-xs">
-              <Activity className="w-4 h-4 text-emerald-200" />
-              <span>{language === 'my' ? 'အိမ်တွင်း ရှေးဦးပြုစုကုသမှု' : 'Symptoms & Home Remedies Guide'}</span>
+    <div className="w-full max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-5 sm:space-y-6 font-myanmar animate-in fade-in duration-200">
+      
+      {/* Sleek Modern Clinical Header (Lightweight & Mobile-Optimized) */}
+      <div className="p-4 sm:p-7 rounded-3xl bg-gradient-to-br from-emerald-600 via-teal-700 to-emerald-900 text-white shadow-lg relative overflow-hidden">
+        {/* Background Decorative Rings */}
+        <div className="absolute -right-12 -top-12 w-48 h-48 rounded-full bg-white/10 blur-2xl pointer-events-none" />
+        <div className="absolute right-1/3 -bottom-12 w-36 h-36 rounded-full bg-teal-400/10 blur-xl pointer-events-none" />
+
+        <div className="relative z-10 space-y-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/15 text-white text-[11px] font-bold backdrop-blur-md">
+              <Activity className="w-3.5 h-3.5 text-emerald-200 animate-pulse" />
+              <span>{language === 'my' ? 'အိမ်တွင်း ရှေးဦးပြုစုကုသမှု' : 'First Aid & Natural Care'}</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black font-myanmar leading-tight">
-              {language === 'my' ? 'ရောဂါလက္ခဏာများ နှင့် အိမ်တွင်းဆေးနည်းများ' : 'Symptoms & Home Remedies'}
-            </h1>
-            <p className="text-xs sm:text-sm text-emerald-100 font-myanmar leading-relaxed">
-              {language === 'my'
-                ? 'နှာစီး၊ ချောင်းဆိုး၊ ဗိုက်အောင့်၊ အရေပြား၊ သွားကိုက်၊ ခေါင်းကိုက် စသည့် အသုံးများသော ရောဂါလက္ခဏာများအတွက် အလွယ်တကူ ပြုလုပ်နိုင်သော သဘာဝ အိမ်တွင်းဆေးနည်းများ။'
-                : 'Natural remedies and management instructions for runny nose, cough, stomach ache, skin issues, toothache, and headache.'}
-            </p>
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-black/25 text-emerald-200 border border-white/10">
+              {allSymptoms.length} {language === 'my' ? 'မျိုး စုစည်းထားပါသည်' : 'Conditions'}
+            </span>
           </div>
 
-
+          <h1 className="text-xl sm:text-2xl md:text-3xl font-black tracking-tight leading-tight">
+            {language === 'my' ? 'ရောဂါလက္ခဏာ နှင့် သဘာဝဆေးနည်းများ' : 'Symptoms & Home Remedies'}
+          </h1>
+          <p className="text-xs sm:text-sm text-emerald-100/90 leading-relaxed max-w-2xl">
+            {language === 'my'
+              ? 'နှာစီး၊ ချောင်းဆိုး၊ ဗိုက်အောင့်၊ အရေပြား၊ သွားကိုက်၊ ခေါင်းကိုက် စသည့် အဖြစ်များသော ဝေဒနာများအတွက် လက်တွေ့အိမ်တွင်း သဘာဝကုထုံးများ။'
+              : 'Safe, natural remedies and emergency clinical warnings for runny nose, cough, stomach pain, rashes, toothache, and headache.'}
+          </p>
         </div>
       </div>
 
-      {/* Control Bar: Search & Quick Condition Cards */}
-      <div className="space-y-4">
+      {/* Search & Category Filter Hub */}
+      <div className="space-y-3">
+        {/* Search Input Bar */}
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400" />
           <input
@@ -261,95 +222,194 @@ export const SymptomsRemedies: React.FC<SymptomsRemediesProps> = ({
             placeholder={
               language === 'my'
                 ? 'ရောဂါလက္ခဏာ သို့မဟုတ် ဆေးနည်း ရှာဖွေပါ (ဥပမာ - နှာစီး၊ ချောင်းဆိုး၊ ခေါင်းကိုက်)...'
-                : 'Search symptom or remedy (e.g. runny nose, cough, headache)...'
+                : 'Search symptom or remedy (e.g. cold, cough, headache)...'
             }
-            className="w-full pl-10 pr-4 py-3 rounded-2xl bg-white dark:bg-neutral-900 comfort:bg-[#faf6ee] border border-neutral-300 dark:border-neutral-700 comfort:border-[#ded4c1] text-xs text-black dark:text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500/50 transition font-myanmar"
+            className="w-full pl-10 pr-9 py-2.5 sm:py-3 rounded-2xl bg-white dark:bg-neutral-900 comfort:bg-[#fbf7ee] border border-neutral-200 dark:border-neutral-800 comfort:border-[#ded5c2] text-xs sm:text-sm text-neutral-900 dark:text-white comfort:text-[#231f1a] placeholder:text-neutral-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30 transition shadow-2xs"
           />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 p-1 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Category Horizontal Filter Pills */}
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none py-1 flex-nowrap touch-pan-x [-webkit-overflow-scrolling:touch] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {CATEGORIES_CONFIG.map((cat) => {
+            const count = cat.id === 'all'
+              ? allSymptoms.length
+              : cat.id === 'saved'
+              ? allSymptoms.filter((s) => bookmarkedIds.has(s.id)).length
+              : allSymptoms.filter((s) => s.category === cat.id).length;
+            const isSelected = selectedCategory === cat.id;
+
+            return (
+              <button
+                key={cat.id}
+                onClick={() => setSelectedCategory(cat.id)}
+                className={`min-h-[40px] px-3 sm:px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all border shrink-0 cursor-pointer flex items-center gap-1.5 active:scale-95 ${
+                  isSelected
+                    ? 'bg-emerald-600 dark:bg-emerald-500 text-white dark:text-black border-transparent shadow-xs ring-2 ring-emerald-500/20'
+                    : 'bg-white dark:bg-neutral-900 comfort:bg-[#fbf7ee] border-neutral-200/80 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:border-emerald-400'
+                }`}
+                type="button"
+              >
+                <cat.Icon className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-white dark:text-black' : 'text-neutral-500 dark:text-neutral-400'}`} />
+                <span>{language === 'my' ? cat.labelMy : cat.labelEn}</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                  isSelected
+                    ? 'bg-white/25 dark:bg-black/25 text-white dark:text-black'
+                    : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-500'
+                }`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Symptoms Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {filteredList.map((item) => (
-          <div
-            key={item.id}
-            className="p-5 rounded-3xl bg-white dark:bg-neutral-900 comfort:bg-[#faf6ee] border border-neutral-200 dark:border-neutral-800 comfort:border-[#ded4c1] shadow-sm hover:shadow-md transition space-y-4 flex flex-col justify-between"
-          >
-            <div className="space-y-3">
-              {/* Card Title Header */}
-              <div className="flex items-start justify-between gap-3 pb-3 border-b border-neutral-100 dark:border-neutral-800 comfort:border-[#ded4c1]">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold shrink-0">
-                    <Thermometer className="w-5 h-5" />
+      {/* Symptoms Card Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
+        {filteredList.map((item) => {
+          const theme = getCategoryTheme(item.category);
+          const remedies = language === 'my' ? item.remediesMy : item.remedies;
+          const precautions = language === 'my' ? item.precautionsMy : item.precautions;
+
+          return (
+            <div
+              key={item.id}
+              className={`p-4 sm:p-5 rounded-3xl bg-white dark:bg-neutral-900 comfort:bg-[#fbf7ee] border border-neutral-200/80 dark:border-neutral-800 comfort:border-[#ded5c2] shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between space-y-4 border-l-4 ${theme.accentBorder}`}
+            >
+              <div className="space-y-3.5">
+                {/* Header: Category Icon + Title + Category Badge */}
+                <div className="flex items-start justify-between gap-2.5 pb-2.5 border-b border-neutral-100 dark:border-neutral-800/80 comfort:border-[#ded5c2]">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-10 h-10 rounded-2xl bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center shrink-0 shadow-2xs">
+                      <theme.Icon className={`w-5 h-5 ${theme.iconColor}`} />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-extrabold text-sm sm:text-base text-neutral-950 dark:text-white comfort:text-[#231f1a] truncate leading-tight">
+                        {language === 'my' ? item.symptomNameMy : item.symptomName}
+                      </h3>
+                      <span className={`inline-block mt-0.5 px-2 py-0.2 rounded-md text-[10px] font-bold border ${theme.badge}`}>
+                        {language === 'my' ? item.categoryMy : item.category}
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-extrabold text-base text-black dark:text-white comfort:text-[#231f1a] font-myanmar">
-                      {language === 'my' ? item.symptomNameMy : item.symptomName}
-                    </h3>
-                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 font-myanmar block">
-                      {language === 'my' ? item.categoryMy : item.category}
-                    </span>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Cloud Bookmark Heart Button */}
+                    <button
+                      onClick={() => handleToggleBookmark(item)}
+                      className="p-1.5 rounded-xl hover:bg-neutral-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+                      title={bookmarkedIds.has(item.id) ? (language === 'my' ? 'သိမ်းထားခြင်းမှ ဖယ်ရှားမည်' : 'Remove bookmark') : (language === 'my' ? 'ဆေးနည်း မှတ်သားမည်' : 'Bookmark remedy')}
+                      type="button"
+                    >
+                      <Heart
+                        className={`w-4 h-4 transition-all ${
+                          bookmarkedIds.has(item.id)
+                            ? 'text-rose-500 fill-rose-500 scale-110'
+                            : 'text-neutral-400 hover:text-rose-500'
+                        }`}
+                      />
+                    </button>
+
+                    {/* 1-Click Copy Button */}
+                    <button
+                      onClick={() => handleCopyRemedies(item)}
+                      className="p-1.5 rounded-xl hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors cursor-pointer"
+                      title="Copy remedies"
+                      type="button"
+                    >
+                      {copiedId === item.id ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                    </button>
                   </div>
                 </div>
-              </div>
 
-              {/* Description */}
-              <p className="text-xs text-neutral-600 dark:text-neutral-400 font-myanmar leading-relaxed">
-                {language === 'my' ? item.descriptionMy : item.description}
-              </p>
+                {/* Description */}
+                <p className="text-xs text-neutral-600 dark:text-neutral-400 leading-relaxed">
+                  {language === 'my' ? item.descriptionMy : item.description}
+                </p>
 
-              {/* Remedies List */}
-              <div className="space-y-2 pt-1">
-                <span className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider block font-myanmar">
-                  {language === 'my' ? 'သဘာဝ အိမ်တွင်းဆေးနည်းများ:' : 'Natural Home Remedies:'}
-                </span>
-                <ul className="space-y-1.5 text-xs text-neutral-800 dark:text-neutral-200 comfort:text-[#231f1a] font-myanmar">
-                  {(language === 'my' ? item.remediesMy : item.remedies).map((rem, idx) => (
-                    <li key={idx} className="flex items-start gap-2 leading-relaxed">
-                      <span className="w-4 h-4 rounded-full bg-emerald-500/15 text-emerald-600 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
-                        ✓
-                      </span>
-                      <span className="flex-1">{rem}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* Precautions */}
-              {((language === 'my' ? item.precautionsMy : item.precautions) || []).length > 0 && (
-                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs font-myanmar space-y-1">
-                  <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300">
-                    <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>{language === 'my' ? 'သတိပြုရန်များ:' : 'Precautions:'}</span>
+                {/* Natural Home Remedies Checklist */}
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
+                    <Leaf className="w-3.5 h-3.5" />
+                    <span>{language === 'my' ? 'သဘာဝ အိမ်တွင်းဆေးနည်းများ:' : 'Natural Remedies:'}</span>
                   </div>
-                  <ul className="list-disc list-inside text-amber-900 dark:text-amber-200 space-y-0.5 text-[11px] leading-relaxed">
-                    {(language === 'my' ? item.precautionsMy : item.precautions)?.map((p, pIdx) => (
-                      <li key={pIdx}>{p}</li>
+
+                  <ul className="space-y-2 text-xs text-neutral-800 dark:text-neutral-200 comfort:text-[#231f1a]">
+                    {remedies.map((rem, idx) => (
+                      <li key={idx} className="flex items-start gap-2 leading-relaxed">
+                        <span className="w-4 h-4 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                          <Check className="w-2.5 h-2.5" />
+                        </span>
+                        <span className="flex-1">{rem}</span>
+                      </li>
                     ))}
                   </ul>
                 </div>
+
+                {/* Precautions Alert Card */}
+                {precautions && precautions.length > 0 && (
+                  <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs space-y-1 mt-2">
+                    <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300">
+                      <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>{language === 'my' ? 'သတိပြုရန်များ:' : 'Precautions:'}</span>
+                    </div>
+                    <ul className="list-disc list-inside text-amber-900 dark:text-amber-200 space-y-0.5 text-[11px] leading-relaxed pl-1">
+                      {precautions.map((p, pIdx) => (
+                        <li key={pIdx}>{p}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Action Button: Consult AI Doctor */}
+              {onConsultAdvisor && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onConsultAdvisor(
+                      `ရောဂါလက္ခဏာ: ${item.symptomNameMy} အတွက် အိမ်တွင်းဆေးနည်းများနှင့် အပိုဆောင်း သတိပြုရန်များ ရှင်းပြပေးပါ`
+                    )
+                  }
+                  className="w-full mt-3 py-2 px-3 rounded-xl bg-neutral-100 hover:bg-emerald-50 hover:text-emerald-700 dark:bg-neutral-800 dark:hover:bg-neutral-700/80 text-neutral-800 dark:text-neutral-200 text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-98 border border-neutral-200/60 dark:border-neutral-700/60"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>{language === 'my' ? 'AI ဆရာဝန်နှင့် မေးမြန်းမည်' : 'Ask AI Doctor'}</span>
+                  <ChevronRight className="w-3.5 h-3.5 opacity-60 ml-auto" />
+                </button>
               )}
             </div>
-
-            {/* AI Advisor Consult Button */}
-            {onConsultAdvisor && (
-              <button
-                type="button"
-                onClick={() =>
-                  onConsultAdvisor(
-                    `ရောဂါလက္ခဏာ: ${item.symptomNameMy} အတွက် အိမ်တွင်းဆေးနည်းများနှင့် အပိုဆောင်း သတိပြုရန်များ ရှင်းပြပေးပါ`
-                  )
-                }
-                className="w-full mt-3 py-2.5 px-3 rounded-xl bg-neutral-100 hover:bg-emerald-50 hover:text-emerald-700 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer font-myanmar"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{language === 'my' ? 'အိမ်တွင်းကုသမှုအကြံပေး မေးမည်' : 'Consult Advisor'}</span>
-              </button>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
+      {/* Empty State */}
+      {filteredList.length === 0 && (
+        <div className="py-12 text-center space-y-3">
+          <p className="text-neutral-500 dark:text-neutral-400 text-sm">
+            {language === 'my' 
+              ? 'ရှာဖွေထားသော ရောဂါလက္ခဏာ မတွေ့ရှိပါ။' 
+              : 'No matching symptoms or remedies found.'}
+          </p>
+          <button
+            onClick={() => {
+              setSearchQuery('');
+              setSelectedCategory('all');
+            }}
+            className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold"
+          >
+            {language === 'my' ? 'အားလုံး ပြန်ကြည့်မည်' : 'Reset Filters'}
+          </button>
+        </div>
+      )}
 
     </div>
   );

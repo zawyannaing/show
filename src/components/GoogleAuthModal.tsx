@@ -15,7 +15,7 @@ import {
   LogIn,
   CheckCircle2
 } from 'lucide-react';
-import { useSupabaseUser, signInWithPassword, signUpWithPassword, signOutUser, signInWithGoogle } from '../lib/supabaseAuth';
+import { useAuth } from '../hooks/useAuth';
 
 export interface GoogleAuthModalProps {
   isOpen: boolean;
@@ -28,7 +28,18 @@ export const GoogleAuthModal: React.FC<GoogleAuthModalProps> = ({
   onClose,
   language
 }) => {
-  const { user, userName, userEmail, userAvatar, isAdmin, loading: authLoading } = useSupabaseUser();
+  const { 
+    user, 
+    userName, 
+    userEmail, 
+    userAvatar, 
+    isAdmin, 
+    loading: authLoading,
+    signInWithPassword,
+    signUpWithPassword,
+    signInWithGoogle,
+    signOut
+  } = useAuth();
   const [activeTab, setActiveTab] = useState<'signin' | 'signup'>('signin');
   
   // Form fields
@@ -135,7 +146,7 @@ export const GoogleAuthModal: React.FC<GoogleAuthModalProps> = ({
   const handleSignOut = async () => {
     setErrorMessage('');
     setSuccessMessage('');
-    const { error } = await signOutUser();
+    const { error } = await signOut();
     if (error) {
       setErrorMessage(error);
     }
