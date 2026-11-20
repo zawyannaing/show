@@ -157,23 +157,40 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
   const fetchPosts = async (isSilent = false) => {
     if (!isSilent) setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('posts')
-        .select('*')
-        .order('created_at', { ascending: false });
+      let supabasePosts: Post[] | null = null;
 
-      if (error) {
-        if (!isSilent) {
-          console.warn('Supabase fetch error, using initial bulletins:', error.message);
+      // 1. Try server proxy endpoint first (ultra-fast & bypasses ISP block in Myanmar)
+      try {
+        const proxyRes = await fetch('/api/posts', { cache: 'no-store' });
+        if (proxyRes.ok) {
+          const proxyData = await proxyRes.json();
+          if (Array.isArray(proxyData.posts) && proxyData.posts.length > 0) {
+            supabasePosts = proxyData.posts;
+          }
         }
-        setPosts((prev) => (prev.length > 0 ? prev : INITIAL_BULLETINS));
-      } else if (data) {
+      } catch (proxyErr) {
+        console.warn('Proxy /api/posts fetch failed, trying direct Supabase:', proxyErr);
+      }
+
+      // 2. Direct Supabase query as fallback
+      if (!supabasePosts || supabasePosts.length === 0) {
+        const { data, error } = await supabase
+          .from('posts')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          supabasePosts = data;
+        }
+      }
+
+      if (supabasePosts && supabasePosts.length > 0) {
         // Merge Supabase posts (newest first) with default seed bulletins
-        const supabaseTitles = new Set(data.map(p => cleanPostTitle(p.title).toLowerCase()));
+        const supabaseTitles = new Set(supabasePosts.map(p => cleanPostTitle(p.title).toLowerCase()));
         const filteredInitial = INITIAL_BULLETINS.filter(
           b => !supabaseTitles.has(cleanPostTitle(b.title).toLowerCase())
         );
-        setPosts([...data, ...filteredInitial]);
+        setPosts([...supabasePosts, ...filteredInitial]);
       } else {
         setPosts(INITIAL_BULLETINS);
       }
