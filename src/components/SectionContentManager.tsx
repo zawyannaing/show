@@ -134,10 +134,10 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
         dimensions: `${result.dimensions.width}×${result.dimensions.height}px`
       });
 
-      // 2. Upload to Supabase Storage bucket 'uploads' under 'plants/'
+      // 2. Upload to Supabase Storage bucket 'uploads' under 'admin/plants/'
       const fileExt = result.format === 'webp' ? 'webp' : 'jpg';
       const cleanFileName = `plant-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
-      const filePath = `plants/${cleanFileName}`;
+      const filePath = `admin/plants/${cleanFileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('uploads')

@@ -408,7 +408,9 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
       if (imageFile && !skipImage) {
         const fileExt = imageFile.name.split('.').pop() || 'webp';
         const cleanFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
-        const filePath = `posts/${cleanFileName}`;
+        const roleFolder = isAdmin || currentUser?.role === 'admin' ? 'admin' : 'users';
+        const typeFolder = postType === 'daily' ? 'daily_bulletins' : 'live_posts';
+        const filePath = `${roleFolder}/${typeFolder}/${cleanFileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from('uploads')

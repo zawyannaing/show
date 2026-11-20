@@ -214,6 +214,47 @@ app.get(['/api/posts', '/posts'], async (req, res) => {
   }
 });
 
+// High-Speed Storage Proxy: Streams images from Supabase Storage with edge caching
+// Bypasses ISP blocking in Myanmar and delivers images in milliseconds via Cloudflare CDN
+app.get(['/api/storage/*', '/storage/*'], async (req, res) => {
+  try {
+    const rawPath = req.params[0] || req.path.replace(/^\/(api\/)?storage\//, '');
+    if (!rawPath) {
+      res.status(400).send('Storage path required');
+      return;
+    }
+    const cleanPath = rawPath.replace(/^\/+/, '');
+    const supabaseUrl = (process.env.VITE_SUPABASE_URL || 'https://wdezdoqnbvfvwnsuysfn.supabase.co').replace(/\/$/, '');
+    const supabaseKey = (process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_9HuDL813Pxf6--IR5Uyd9Q_qAh09p7R').trim();
+
+    const targetUrl = `${supabaseUrl}/storage/v1/object/public/${cleanPath}`;
+
+    const imgRes = await fetch(targetUrl, {
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`
+      },
+      signal: AbortSignal.timeout(8000)
+    });
+
+    if (!imgRes.ok) {
+      res.status(imgRes.status).send('Image not found in storage');
+      return;
+    }
+
+    const contentType = imgRes.headers.get('content-type') || 'image/webp';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    const arrayBuffer = await imgRes.arrayBuffer();
+    res.send(Buffer.from(arrayBuffer));
+  } catch (err: any) {
+    console.error('Storage proxy error:', err?.message || err);
+    res.status(500).send('Error streaming storage image');
+  }
+});
+
 // AI Doctor Medicine Photo Identification endpoint
 app.post(['/api/medicine/identify', '/medicine/identify'], async (req, res) => {
   try {

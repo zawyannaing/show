@@ -41,6 +41,7 @@ import { useAuth } from '../hooks/useAuth';
 import { INITIAL_BULLETINS, getPostCategory, cleanPostTitle } from '../data/initialBulletins';
 import { formatFacebookDate, getDateDayStatus } from '../utils/dateFormatter';
 import { getLocalBookmarks, toggleBookmark, BookmarkItem } from '../lib/userCloudSync';
+import { getOptimizedImageUrl } from '../utils/imageUrlHelper';
 
 interface DynamicPostsFeedProps {
   language: 'en' | 'my';
@@ -220,14 +221,25 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
       )
       .subscribe();
 
-    // 2. Facebook-style auto-polling fallback every 8 seconds across all devices
+    // 2. Facebook-style auto-polling fallback every 6 seconds across all devices
     const pollInterval = setInterval(() => {
       fetchPosts(true);
-    }, 8000);
+    }, 6000);
+
+    // 3. Instant fetch on window focus or tab visibility change
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchPosts(true);
+      }
+    };
+    window.addEventListener('focus', handleVisibilityChange);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       supabase.removeChannel(channel);
       clearInterval(pollInterval);
+      window.removeEventListener('focus', handleVisibilityChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 
@@ -575,10 +587,16 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
                       onClick={() => setSelectedPost(post)}
                     >
                       <img
-                        src={post.image_url}
+                        src={getOptimizedImageUrl(post.image_url) || post.image_url}
                         alt={cleanTitle}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                         loading="lazy"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          if (post.image_url && target.src !== post.image_url) {
+                            target.src = post.image_url;
+                          }
+                        }}
                       />
                       <div className="absolute top-3 left-3">
                         {isDaily ? (
@@ -751,9 +769,15 @@ export const DynamicPostsFeed: React.FC<DynamicPostsFeedProps> = ({ language, on
             {selectedPost.image_url && (
               <div className="w-full max-h-72 shrink-0 overflow-hidden bg-black relative">
                 <img
-                  src={selectedPost.image_url}
+                  src={getOptimizedImageUrl(selectedPost.image_url) || selectedPost.image_url}
                   alt={cleanPostTitle(selectedPost.title)}
                   className="w-full h-full object-contain"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (selectedPost.image_url && target.src !== selectedPost.image_url) {
+                      target.src = selectedPost.image_url;
+                    }
+                  }}
                 />
               </div>
             )}

@@ -214,9 +214,11 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
 
       // If user provided a new image file, upload it
       if (newImageFile) {
-        const fileExt = newImageFile.name.split('.').pop() || 'jpg';
+        const fileExt = newImageFile.name.split('.').pop() || 'webp';
         const cleanFileName = `edit-${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
-        const filePath = `posts/${cleanFileName}`;
+        const roleFolder = isAdmin ? 'admin' : 'users';
+        const typeFolder = postType === 'daily' ? 'daily_bulletins' : 'live_posts';
+        const filePath = `${roleFolder}/${typeFolder}/${cleanFileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from('uploads')
