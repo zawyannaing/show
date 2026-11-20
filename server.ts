@@ -4,13 +4,8 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
-import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
-
-const serverSupabaseUrl = process.env.VITE_SUPABASE_URL || 'https://wdezdoqnbvfvwnsuysfn.supabase.co';
-const serverSupabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_9HuDL813Pxf6--IR5Uyd9Q_qAh09p7R';
-const serverSupabase = createClient(serverSupabaseUrl, serverSupabaseKey);
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -192,21 +187,30 @@ app.get('/api/test-ai', async (req, res) => {
 // Guarantees all devices in Myanmar receive fresh real-time posts without ISP throttling
 app.get(['/api/posts', '/posts'], async (req, res) => {
   try {
-    const { data, error } = await serverSupabase
-      .from('posts')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const supabaseUrl = (process.env.VITE_SUPABASE_URL || 'https://wdezdoqnbvfvwnsuysfn.supabase.co').replace(/\/$/, '');
+    const supabaseKey = (process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_9HuDL813Pxf6--IR5Uyd9Q_qAh09p7R').trim();
 
-    if (error) {
-      console.warn('Server Supabase posts fetch error:', error.message);
-      res.status(500).json({ error: error.message, posts: [] });
+    const restRes = await fetch(`${supabaseUrl}/rest/v1/posts?select=*&order=created_at.desc`, {
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json'
+      },
+      signal: AbortSignal.timeout(6000)
+    });
+
+    if (!restRes.ok) {
+      const errText = await restRes.text();
+      console.warn('Server Supabase posts fetch error:', restRes.status, errText);
+      res.status(500).json({ error: errText, posts: [] });
       return;
     }
 
+    const data = await restRes.json();
     res.json({ posts: data || [] });
   } catch (err: any) {
-    console.error('Server posts fetch exception:', err);
-    res.status(500).json({ error: err.message, posts: [] });
+    console.error('Server posts fetch exception:', err?.message || err);
+    res.status(500).json({ error: err?.message || 'Failed to fetch posts', posts: [] });
   }
 });
 
