@@ -140,19 +140,54 @@ app.get(['/api/health', '/health'], (req, res) => {
   });
 });
 
+// Helper to update variables in .env file safely
+function updateEnvFile(updates: Record<string, string>) {
+  const envPath = path.resolve(process.cwd(), '.env');
+  let content = '';
+  if (fs.existsSync(envPath)) {
+    content = fs.readFileSync(envPath, 'utf-8');
+  }
+  const lines = content.split('\n');
+  const remainingKeys = new Set(Object.keys(updates));
+
+  const updatedLines = lines.map(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return line;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) return line;
+    const key = trimmed.substring(0, eqIdx).trim();
+    if (updates[key] !== undefined) {
+      remainingKeys.delete(key);
+      return `${key}="${updates[key]}"`;
+    }
+    return line;
+  });
+
+  for (const key of remainingKeys) {
+    updatedLines.push(`${key}="${updates[key]}"`);
+  }
+
+  fs.writeFileSync(envPath, updatedLines.join('\n'), 'utf-8');
+}
+
 // Diagnostic endpoint to test AI keys live
-app.get('/api/test-ai', async (req, res) => {
+app.get(['/api/admin/keys-status', '/api/test-ai'], async (_req, res) => {
   const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
   const geminiKey = (process.env.GEMINI_API_KEY || '').trim();
+  const activeModel = (process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash').trim();
 
   const results: any = {
+    status: openRouterKey ? 'ready' : 'unconfigured',
     hasOpenRouterKey: Boolean(openRouterKey),
-    openRouterKeyPrefix: openRouterKey ? openRouterKey.substring(0, 10) + '...' : null,
+    openRouterKeyPrefix: openRouterKey ? openRouterKey.substring(0, 12) + '...' + openRouterKey.slice(-4) : null,
     hasGeminiKey: Boolean(geminiKey),
+    geminiKeyPrefix: geminiKey ? geminiKey.substring(0, 8) + '...' : null,
+    activeModel
   };
 
   if (openRouterKey) {
     try {
+      const startTime = Date.now();
       const orTest = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -168,19 +203,106 @@ app.get('/api/test-ai', async (req, res) => {
         }),
         signal: AbortSignal.timeout(6000)
       });
+      results.latencyMs = Date.now() - startTime;
       results.openRouterStatus = orTest.status;
       if (orTest.ok) {
         const d = await orTest.json();
         results.openRouterResponse = d.choices?.[0]?.message?.content || d;
+        results.verified = true;
       } else {
         results.openRouterError = await orTest.text();
+        results.verified = false;
       }
     } catch (e: any) {
       results.openRouterException = e.message;
+      results.verified = false;
     }
   }
 
   res.json(results);
+});
+
+// Admin endpoint to update server API keys and persist to .env
+app.post(['/api/admin/update-keys', '/api/update-keys'], async (req, res) => {
+  try {
+    const { openRouterApiKey, geminiApiKey, model } = req.body || {};
+
+    if (!openRouterApiKey && !geminiApiKey && !model) {
+      res.status(400).json({ error: 'At least one key or model parameter is required.' });
+      return;
+    }
+
+    const updates: Record<string, string> = {};
+
+    if (openRouterApiKey && typeof openRouterApiKey === 'string') {
+      const cleanKey = openRouterApiKey.trim();
+      // Test key against OpenRouter before accepting
+      try {
+        const testRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${cleanKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://show-ai-studio.com',
+            'X-Title': 'ShowCare Verification',
+          },
+          body: JSON.stringify({
+            model: 'google/gemini-2.5-flash-lite',
+            messages: [{ role: 'user', content: 'Ping' }],
+            max_tokens: 5
+          }),
+          signal: AbortSignal.timeout(8000)
+        });
+
+        if (!testRes.ok) {
+          const errText = await testRes.text();
+          res.status(400).json({
+            error: `OpenRouter key verification failed (${testRes.status}): ${errText.substring(0, 200)}`
+          });
+          return;
+        }
+      } catch (err: any) {
+        res.status(400).json({
+          error: `Failed to connect to OpenRouter with provided key: ${err.message}`
+        });
+        return;
+      }
+
+      process.env.OPENROUTER_API_KEY = cleanKey;
+      updates['OPENROUTER_API_KEY'] = cleanKey;
+    }
+
+    if (geminiApiKey && typeof geminiApiKey === 'string') {
+      const cleanGemini = geminiApiKey.trim();
+      process.env.GEMINI_API_KEY = cleanGemini;
+      updates['GEMINI_API_KEY'] = cleanGemini;
+    }
+
+    if (model && typeof model === 'string') {
+      const cleanModel = model.trim();
+      process.env.OPENROUTER_MODEL = cleanModel;
+      updates['OPENROUTER_MODEL'] = cleanModel;
+    }
+
+    // Persist to .env file
+    try {
+      updateEnvFile(updates);
+    } catch (fsErr) {
+      console.warn('Could not write to .env file:', fsErr);
+    }
+
+    res.json({
+      success: true,
+      message: 'Server AI keys updated and verified successfully!',
+      hasOpenRouterKey: Boolean(process.env.OPENROUTER_API_KEY),
+      openRouterKeyPrefix: process.env.OPENROUTER_API_KEY ? process.env.OPENROUTER_API_KEY.substring(0, 10) + '...' : null,
+      hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+      activeModel: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash'
+    });
+  } catch (err: any) {
+    console.error('Update keys error:', err);
+    res.status(500).json({ error: 'Failed to update keys: ' + err.message });
+  }
 });
 
 // Live Posts endpoint: Proxy Supabase posts directly from server
@@ -265,12 +387,12 @@ app.post(['/api/medicine/identify', '/medicine/identify'], async (req, res) => {
       return;
     }
 
-    const rawGeminiKey = geminiApiKey || (req.headers['x-gemini-key'] as string) || process.env.GEMINI_API_KEY;
+    const rawGeminiKey = (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) || geminiApiKey || (req.headers['x-gemini-key'] as string);
     const effectiveGeminiKey = typeof rawGeminiKey === 'string' ? rawGeminiKey.trim() : '';
 
-    const rawOpenRouterKey = openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENROUTER_API_KEY;
+    const rawOpenRouterKey = (process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY.trim()) || openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENAI_API_KEY;
     const effectiveOpenRouterKey = typeof rawOpenRouterKey === 'string' ? rawOpenRouterKey.trim() : '';
-    const selectedModel = typeof model === 'string' ? model : (process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash');
+    const selectedModel = (process.env.OPENROUTER_MODEL && process.env.OPENROUTER_MODEL.trim()) || (typeof model === 'string' && model.trim()) || 'google/gemini-2.5-flash';
 
     const systemPrompt = `You are an expert AI Doctor and Senior Pharmacist in Myanmar helping an elderly patient (senior citizen) and their caregiver understand a medicine from a photo.
 The patient or their family took a photo of medicine packaging, blister foil, tablet bottle, liquid syrup, or Myanmar traditional medicine packet.
@@ -707,12 +829,12 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
     }
 
     const effectiveMessage = (message && typeof message === 'string') ? message : 'Please analyze this medicine or health image in detail.';
-    const rawGeminiKey = geminiApiKey || (req.headers['x-gemini-key'] as string) || process.env.GEMINI_API_KEY;
+    const rawGeminiKey = (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) || geminiApiKey || (req.headers['x-gemini-key'] as string);
     const effectiveGeminiKey = typeof rawGeminiKey === 'string' ? rawGeminiKey.trim() : '';
 
-    const rawOpenRouterKey = openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
+    const rawOpenRouterKey = (process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY.trim()) || openRouterApiKey || (req.headers['x-openrouter-key'] as string) || process.env.OPENAI_API_KEY;
     const effectiveOpenRouterKey = typeof rawOpenRouterKey === 'string' ? rawOpenRouterKey.trim() : '';
-    const selectedModel = typeof model === 'string' ? model : (process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash');
+    const selectedModel = (process.env.OPENROUTER_MODEL && process.env.OPENROUTER_MODEL.trim()) || (typeof model === 'string' && model.trim()) || 'google/gemini-2.5-flash';
 
     const hasMyanmarCharacters = /[\u1000-\u109F]/.test(effectiveMessage);
     const shouldReplyInMyanmar = language === 'my' || hasMyanmarCharacters;

@@ -58,42 +58,115 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
     setActiveTab(initialTab);
   }, [initialTab]);
 
-  // API Key state for Admin
-  const [adminGeminiKey, setAdminGeminiKey] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('tmhip_custom_gemini_key') || '';
-    }
-    return '';
-  });
-  const [adminOpenRouterKey, setAdminOpenRouterKey] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('tmhip_custom_openrouter_key') || '';
-    }
-    return '';
-  });
+  // Server AI Status State
+  const [serverAiStatus, setServerAiStatus] = useState<{
+    loading: boolean;
+    hasOpenRouterKey?: boolean;
+    openRouterKeyPrefix?: string | null;
+    hasGeminiKey?: boolean;
+    geminiKeyPrefix?: string | null;
+    activeModel?: string;
+    openRouterStatus?: number;
+    openRouterResponse?: string;
+    openRouterError?: string;
+    latencyMs?: number;
+    verified?: boolean;
+    testedAt?: string;
+  }>({ loading: false });
+
+  const [testingAi, setTestingAi] = useState(false);
+  const [savingKeys, setSavingKeys] = useState(false);
+  const [adminOpenRouterKey, setAdminOpenRouterKey] = useState('');
+  const [adminGeminiKey, setAdminGeminiKey] = useState('');
+  const [adminModel, setAdminModel] = useState('google/gemini-2.5-flash');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
 
-  const handleSaveApiKeys = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('tmhip_custom_gemini_key', adminGeminiKey.trim());
-      localStorage.setItem('tmhip_custom_openrouter_key', adminOpenRouterKey.trim());
-      window.dispatchEvent(new Event('tmhip_content_updated'));
+  const fetchServerAiStatus = async () => {
+    setTestingAi(true);
+    try {
+      const res = await fetch('/api/admin/keys-status');
+      if (res.ok) {
+        const data = await res.json();
+        setServerAiStatus({
+          ...data,
+          loading: false,
+          testedAt: new Date().toLocaleTimeString()
+        });
+        if (data.activeModel) setAdminModel(data.activeModel);
+      }
+    } catch (err: any) {
+      setServerAiStatus(prev => ({
+        ...prev,
+        loading: false,
+        verified: false,
+        openRouterError: err.message
+      }));
+    } finally {
+      setTestingAi(false);
     }
-    showNotification(language === 'my' ? 'API Key များကို စနစ်တွင် သိမ်းဆည်းလိုက်ပါပြီ' : 'System API Keys updated successfully!');
+  };
+
+  useEffect(() => {
+    if (activeTab === 'apikeys') {
+      fetchServerAiStatus();
+    }
+  }, [activeTab]);
+
+  const handleSaveApiKeys = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminOpenRouterKey && !adminGeminiKey && !adminModel) {
+      alert(language === 'my' ? 'ကျေးဇူးပြု၍ API Key အနည်းဆုံးတစ်ခု ထည့်သွင်းပါ' : 'Please enter at least one API key');
+      return;
+    }
+
+    setSavingKeys(true);
+    try {
+      const res = await fetch('/api/admin/update-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          openRouterApiKey: adminOpenRouterKey.trim() || undefined,
+          geminiApiKey: adminGeminiKey.trim() || undefined,
+          model: adminModel.trim() || undefined
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update keys');
+      }
+
+      // Clear obsolete localStorage keys to prevent interference
+      try {
+        localStorage.removeItem('tmhip_custom_gemini_key');
+        localStorage.removeItem('tmhip_custom_openrouter_key');
+        localStorage.removeItem('tmhip_gemini_key');
+        localStorage.removeItem('tmhip_openrouter_key');
+      } catch {}
+
+      showNotification(language === 'my' ? 'ဆာဗာတွင် API Key သိမ်းဆည်းပြီး အောင်မြင်စွာ စမ်းသပ်အတည်ပြုပြီးပါပြီ' : 'Server API keys updated and verified successfully!');
+      setAdminOpenRouterKey('');
+      setAdminGeminiKey('');
+      await fetchServerAiStatus();
+    } catch (err: any) {
+      alert((language === 'my' ? 'API Key သိမ်းဆည်းရာတွင် အမှားဖြစ်ပေါ်ပါသည်: ' : 'Failed to update API keys: ') + err.message);
+    } finally {
+      setSavingKeys(false);
+    }
   };
 
   const handleClearApiKeys = () => {
-    if (!window.confirm(language === 'my' ? 'API Key များကို ပယ်ဖျက်မည်လား?' : 'Clear all system API keys?')) return;
-    setAdminGeminiKey('');
-    setAdminOpenRouterKey('');
-    if (typeof window !== 'undefined') {
+    if (!window.confirm(language === 'my' ? 'ဒေသတွင်း သိမ်းဆည်းထားသော အဟောင်း key များကို ရှင်းလင်းမည်လား?' : 'Clear cached keys from this browser?')) return;
+    try {
       localStorage.removeItem('tmhip_custom_gemini_key');
       localStorage.removeItem('tmhip_custom_openrouter_key');
-      window.dispatchEvent(new Event('tmhip_content_updated'));
-    }
-    showNotification(language === 'my' ? 'API Key များကို ဖျက်သိမ်းလိုက်ပါပြီ' : 'API keys cleared.');
+      localStorage.removeItem('tmhip_gemini_key');
+      localStorage.removeItem('tmhip_openrouter_key');
+    } catch {}
+    setAdminOpenRouterKey('');
+    setAdminGeminiKey('');
+    showNotification(language === 'my' ? 'ဒေသတွင်း Key များကို ရှင်းလင်းပြီးပါပြီ' : 'Local browser keys cleared.');
   };
 
   // Data states
@@ -1531,61 +1604,123 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
         </div>
       )}
 
-      {/* ================= SECTION 5: API KEYS & SYSTEM CONFIG ================= */}
+      {/* ================= SECTION 5: API KEYS & SERVER AI STATUS ================= */}
       {activeTab === 'apikeys' && (
         <div className="space-y-6">
-          <div className="p-6 rounded-3xl bg-amber-500/10 border border-amber-500/30 space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-sm">
-                <KeyRound className="w-5 h-5" />
+          {/* Live Server Health Card */}
+          <div className="p-6 rounded-3xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-neutral-200 dark:border-neutral-700/60">
+              <div className="flex items-center gap-3">
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm ${
+                  serverAiStatus.openRouterStatus === 200 || serverAiStatus.verified
+                    ? 'bg-emerald-500 text-white'
+                    : 'bg-amber-500 text-white'
+                }`}>
+                  <Activity className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-black dark:text-white comfort:text-[#231f1a]">
+                      {language === 'my' ? 'ဆာဗာ AI ဝန်ဆောင်မှု အခြေအနေ' : 'Server AI Engine Health & Status'}
+                    </h3>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                      serverAiStatus.openRouterStatus === 200 || serverAiStatus.verified
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
+                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
+                    }`}>
+                      {serverAiStatus.openRouterStatus === 200 || serverAiStatus.verified
+                        ? (language === 'my' ? '🟢 ပုံမှန်အလုပ်လုပ်နေပါသည် (Active)' : '🟢 Active & Ready')
+                        : (language === 'my' ? '🟡 စစ်ဆေးနေပါသည်' : '🟡 Checking')}
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    {language === 'my'
+                      ? 'ဆာဗာရှိ API Key ဖြင့် ဆေးဝါးဓာတ်ပုံစစ်ဆေးခြင်းနှင့် ဆေးပညာ AI အကြံပေးချက်များ စက်အားလုံးအတွက် တိုက်ရိုက် ဝန်ဆောင်မှုပေးနေပါသည်'
+                      : 'Server-side AI powers medicine photo identification and clinical AI doctor across all client devices.'}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-base font-bold text-black dark:text-white comfort:text-[#231f1a]">
-                  {language === 'my' ? 'စနစ် Default API Key စီမံခန့်ခွဲမှု' : 'System Default API Key Management'}
-                </h3>
-                <p className="text-xs text-neutral-600 dark:text-neutral-400 mt-0.5">
-                  {language === 'my'
-                    ? 'အသုံးပြုသူများ ဘက်မှ API Key ရိုက်ထည့်ရန် မလိုအပ်ပါ။ Admin မှ ဤနေရာတွင် စနစ်အတွက် API Key ကို သတ်မှတ်ထားရှိနိုင်ပါသည်။'
-                    : 'Users do not need to enter an API key. Admins configure system default API keys here for all AI consultations.'}
-                </p>
+
+              <button
+                type="button"
+                onClick={fetchServerAiStatus}
+                disabled={testingAi}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-sm cursor-pointer disabled:opacity-50 shrink-0"
+              >
+                {testingAi ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                <span>{language === 'my' ? 'ချိတ်ဆက်မှု စမ်းသပ်မည်' : 'Test Live Connection'}</span>
+              </button>
+            </div>
+
+            {/* Diagnostic Metrics Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="p-3.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                <span className="text-[11px] font-bold text-neutral-500 dark:text-neutral-400 block mb-1">
+                  {language === 'my' ? 'အသုံးပြုနေသော Model' : 'Active AI Model'}
+                </span>
+                <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400 truncate block">
+                  {serverAiStatus.activeModel || adminModel || 'google/gemini-2.5-flash'}
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                <span className="text-[11px] font-bold text-neutral-500 dark:text-neutral-400 block mb-1">
+                  {language === 'my' ? 'OpenRouter Key အခြေအနေ' : 'OpenRouter Key'}
+                </span>
+                <span className="text-xs font-mono font-bold text-neutral-800 dark:text-neutral-200 truncate block">
+                  {serverAiStatus.hasOpenRouterKey ? (serverAiStatus.openRouterKeyPrefix || 'Connected') : 'Not Configured'}
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                <span className="text-[11px] font-bold text-neutral-500 dark:text-neutral-400 block mb-1">
+                  {language === 'my' ? 'တုံ့ပြန်မှု အမြန်နှုန်း (Latency)' : 'Server Ping Latency'}
+                </span>
+                <span className="text-xs font-bold text-neutral-800 dark:text-neutral-200 block">
+                  {serverAiStatus.latencyMs ? `${serverAiStatus.latencyMs} ms` : (serverAiStatus.openRouterStatus === 200 ? 'HTTP 200 OK' : 'Checking...')}
+                </span>
               </div>
             </div>
 
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border border-emerald-500/20 text-xs font-bold font-myanmar">
-              <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-              <span>{language === 'my' ? 'အသုံးပြုသူများ အလိုအလျောက် သုံးစွဲနိုင်သော စနစ် API Key ဖွင့်ထားပါသည်' : 'All users automatically use system default API key'}</span>
-            </div>
+            {/* Live Response Preview */}
+            {serverAiStatus.openRouterResponse && (
+              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-900 dark:text-emerald-200">
+                <span className="font-bold block mb-1">
+                  {language === 'my' ? '✅ ဆာဗာ တိုက်ရိုက် စမ်းသပ်တုံ့ပြန်ချက်:' : '✅ Live AI Ping Response:'}
+                </span>
+                <p className="font-mono text-[11px] italic">"{serverAiStatus.openRouterResponse}"</p>
+              </div>
+            )}
+
+            {serverAiStatus.openRouterError && (
+              <div className="p-3.5 rounded-2xl bg-red-500/10 border border-red-500/20 text-xs text-red-900 dark:text-red-300">
+                <span className="font-bold block mb-1">
+                  {language === 'my' ? '⚠️ ချိတ်ဆက်မှု အမှား:' : '⚠️ Connection Error:'}
+                </span>
+                <p className="font-mono text-[11px]">{serverAiStatus.openRouterError}</p>
+              </div>
+            )}
           </div>
 
+          {/* Form to Update Server Keys */}
           <form onSubmit={handleSaveApiKeys} className="p-6 rounded-3xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 space-y-5">
             <div>
-              <label className="block text-xs font-bold text-neutral-800 dark:text-neutral-200 mb-1 font-myanmar">
-                {language === 'my' ? 'Gemini API Key (Google AI Studio System Key):' : 'Gemini API Key (Google AI Studio System Key):'}
-              </label>
-              <div className="relative">
-                <input
-                  type={showGeminiKey ? 'text' : 'password'}
-                  value={adminGeminiKey}
-                  onChange={(e) => setAdminGeminiKey(e.target.value)}
-                  placeholder="AIzaSy..."
-                  className="w-full pl-4 pr-10 py-2.5 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 text-xs font-mono text-black dark:text-white"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowGeminiKey(!showGeminiKey)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 cursor-pointer"
-                >
-                  {showGeminiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
+              <div className="flex items-center gap-2 mb-1">
+                <KeyRound className="w-4 h-4 text-emerald-600" />
+                <h4 className="text-sm font-bold text-black dark:text-white comfort:text-[#231f1a]">
+                  {language === 'my' ? 'ဆာဗာ API Key အသစ် ပြောင်းလဲသတ်မှတ်ခြင်း' : 'Update Server API Keys'}
+                </h4>
               </div>
-              <p className="text-[11px] text-neutral-500 mt-1">
-                {language === 'my' ? 'Google AI Studio မှ ရရှိသော API Key ကို ထည့်သွင်းပေးပါ။' : 'Enter system Gemini API Key from Google AI Studio.'}
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                {language === 'my'
+                  ? 'ဤနေရာတွင် ထည့်သွင်းလိုက်သော Key များသည် ဆာဗာ၏ environment (.env) တွင် တိုက်ရိုက် သိမ်းဆည်းသွားမည်ဖြစ်ပြီး စက်အားလုံးအတွက် ချက်ချင်း အကျိုးသက်ရောက်ပါမည်။'
+                  : 'Keys updated here are saved directly to the server environment (.env) and take effect immediately across all users.'}
               </p>
             </div>
 
             <div>
               <label className="block text-xs font-bold text-neutral-800 dark:text-neutral-200 mb-1 font-myanmar">
-                {language === 'my' ? 'OpenRouter API Key (စိတ်ကြိုက် Secondary Provider Key):' : 'OpenRouter API Key (Optional Secondary Provider Key):'}
+                {language === 'my' ? 'OpenRouter API Key (အဓိက Master Key):' : 'OpenRouter API Key (Primary Server Key):'}
               </label>
               <div className="relative">
                 <input
@@ -1603,6 +1738,46 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
                   {showOpenRouterKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+              <p className="text-[11px] text-neutral-500 mt-1">
+                {language === 'my' ? 'OpenRouter.ai မှ ရရှိသော active key ကို ထည့်ပေးပါ။ စနစ်မှ auto-verify ပြုလုပ်ပြီးမှသာ သိမ်းဆည်းပါမည်။' : 'Enter valid OpenRouter key. System auto-verifies before saving.'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-neutral-800 dark:text-neutral-200 mb-1 font-myanmar">
+                {language === 'my' ? 'Google Gemini API Key (Optional Backup):' : 'Google Gemini API Key (Optional Backup):'}
+              </label>
+              <div className="relative">
+                <input
+                  type={showGeminiKey ? 'text' : 'password'}
+                  value={adminGeminiKey}
+                  onChange={(e) => setAdminGeminiKey(e.target.value)}
+                  placeholder="AIzaSy..."
+                  className="w-full pl-4 pr-10 py-2.5 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 text-xs font-mono text-black dark:text-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowGeminiKey(!showGeminiKey)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 cursor-pointer"
+                >
+                  {showGeminiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-neutral-800 dark:text-neutral-200 mb-1 font-myanmar">
+                {language === 'my' ? 'AI Model ရွေးချယ်မှု:' : 'AI Model Selection:'}
+              </label>
+              <select
+                value={adminModel}
+                onChange={(e) => setAdminModel(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 text-xs font-mono text-black dark:text-white cursor-pointer"
+              >
+                <option value="google/gemini-2.5-flash">google/gemini-2.5-flash (အကြံပြုထားသည် - မြန်မာဘာသာ အထူးကောင်းမွန်)</option>
+                <option value="google/gemini-2.5-flash-lite">google/gemini-2.5-flash-lite (အလွန်မြန်ဆန်သော Lite Model)</option>
+                <option value="anthropic/claude-3.5-sonnet">anthropic/claude-3.5-sonnet (High-End Clinical Doctor)</option>
+              </select>
             </div>
 
             <div className="flex items-center justify-between pt-2 border-t border-neutral-200 dark:border-neutral-700">
@@ -1611,15 +1786,16 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
                 onClick={handleClearApiKeys}
                 className="px-4 py-2.5 rounded-2xl bg-red-50 hover:bg-red-100 dark:bg-red-950/40 text-red-600 font-bold text-xs border border-red-200 dark:border-red-900 transition cursor-pointer font-myanmar"
               >
-                {language === 'my' ? 'Key ဖျက်မည်' : 'Clear Keys'}
+                {language === 'my' ? 'Browser Cache Keys ရှင်းလင်းမည်' : 'Clear Browser Keys'}
               </button>
 
               <button
                 type="submit"
-                className="px-6 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition shadow-sm cursor-pointer font-myanmar"
+                disabled={savingKeys}
+                className="px-6 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition shadow-sm cursor-pointer font-myanmar disabled:opacity-50"
               >
-                <Save className="w-4 h-4" />
-                <span>{language === 'my' ? 'API Key များ သိမ်းဆည်းမည်' : 'Save System API Keys'}</span>
+                {savingKeys ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                <span>{language === 'my' ? 'ဆာဗာတွင် တိုက်ရိုက် သိမ်းဆည်းမည်' : 'Save to Server'}</span>
               </button>
             </div>
           </form>

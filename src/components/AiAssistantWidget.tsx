@@ -50,6 +50,16 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
     setChatLanguage(language);
   }, [language]);
 
+  // Clean up any stale/expired local storage keys on mount
+  useEffect(() => {
+    try {
+      localStorage.removeItem('tmhip_gemini_key');
+      localStorage.removeItem('tmhip_openrouter_key');
+      localStorage.removeItem('tmhip_custom_gemini_key');
+      localStorage.removeItem('tmhip_custom_openrouter_key');
+    } catch {}
+  }, []);
+
   useEffect(() => {
     if (isOpen) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -100,23 +110,14 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
     setLoading(true);
 
     try {
-      const geminiKey = localStorage.getItem('tmhip_gemini_key') || '';
-      const openRouterKey = localStorage.getItem('tmhip_openrouter_key') || '';
-      const selectedModel = localStorage.getItem('tmhip_openrouter_model') || 'google/gemini-2.5-flash';
-
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 
-          'Content-Type': 'application/json',
-          ...(geminiKey ? { 'x-gemini-key': geminiKey } : {}),
-          ...(openRouterKey ? { 'x-openrouter-key': openRouterKey } : {})
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ 
           message: queryText, 
-          language: chatLanguage,
-          geminiApiKey: geminiKey,
-          openRouterApiKey: openRouterKey,
-          model: selectedModel
+          language: chatLanguage
         }),
       });
 

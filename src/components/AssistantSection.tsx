@@ -85,18 +85,22 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
   const [revisitedConsultationTitle, setRevisitedConsultationTitle] = useState<string | null>(null);
   
   // Settings & Audio
-  const [geminiKey, setGeminiKey] = useState<string>(() => {
-    return localStorage.getItem('tmhip_gemini_key') || '';
-  });
-  const [openRouterKey, setOpenRouterKey] = useState<string>(() => {
-    return localStorage.getItem('tmhip_openrouter_key') || '';
-  });
   const [selectedModel, setSelectedModel] = useState<string>(() => {
-    return localStorage.getItem('tmhip_openrouter_model') || 'google/gemini-2.5-flash';
+    return 'google/gemini-2.5-flash';
   });
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
+
+  // Clean up any stale/expired local storage keys on mount
+  useEffect(() => {
+    try {
+      localStorage.removeItem('tmhip_gemini_key');
+      localStorage.removeItem('tmhip_openrouter_key');
+      localStorage.removeItem('tmhip_custom_gemini_key');
+      localStorage.removeItem('tmhip_custom_openrouter_key');
+    } catch {}
+  }, []);
 
   // Group stored chat messages from history prop into structured consultations
   const storedConsultations = useMemo<StoredConsultation[]>(() => {
@@ -467,17 +471,13 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
           const medRes = await fetch('/api/medicine/identify', {
             method: 'POST',
             headers: { 
-              'Content-Type': 'application/json',
-              ...(geminiKey ? { 'x-gemini-key': geminiKey } : {}),
-              ...(openRouterKey ? { 'x-openrouter-key': openRouterKey } : {})
+              'Content-Type': 'application/json'
             },
             body: JSON.stringify({
               image: photo,
               language: chatLanguage,
               additionalNotes: queryText,
               medicineHint: medicineHint,
-              geminiApiKey: geminiKey,
-              openRouterApiKey: openRouterKey,
               model: selectedModel
             })
           });
