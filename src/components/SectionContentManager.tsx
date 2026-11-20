@@ -190,26 +190,32 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
     setHerbs(updated);
     saveManagedHerbs(updated);
 
-    // Auto Broadcast to Supabase Live Feed (Facebook Style for all devices)
-    const plantName = editingHerb.myanmarName || editingHerb.englishName;
-    const postTitle = `[Live] 🌿 ဆေးဖက်ဝင်အပင် အသစ်ဖြည့်သွင်းမှု: ${plantName}`;
-    const postContent = `📌 အမည်: ${plantName} (${editingHerb.scientificName})\n\n💡 သောက်သုံးပုံနှင့် ဆေးညွှန်း:\n${editingHerb.myanmarDescription || editingHerb.description || 'သဘာဝ ဆေးဖက်ဝင် အပင်ဖြစ်ပါသည်။'}\n\n⚠️ သတိပြုရန်:\n${editingHerb.dosageMy || editingHerb.dosage || 'ဆရာဝန် သို့မဟုတ် တိုင်းရင်းဆေးဆရာနှင့် တိုင်ပင်၍ သောက်သုံးပါ။'}`;
+    // Auto Broadcast to Supabase Live Feed (Facebook Style for all devices) ONLY when adding a NEW plant
+    if (isNewHerb) {
+      const plantName = editingHerb.myanmarName || editingHerb.englishName;
+      const postTitle = `[Live] 🌿 ဆေးဖက်ဝင်အပင် အသစ်ဖြည့်သွင်းမှု: ${plantName}`;
+      const postContent = `📌 အမည်: ${plantName} (${editingHerb.scientificName})\n\n💡 သောက်သုံးပုံနှင့် ဆေးညွှန်း:\n${editingHerb.myanmarDescription || editingHerb.description || 'သဘာဝ ဆေးဖက်ဝင် အပင်ဖြစ်ပါသည်။'}\n\n⚠️ သတိပြုရန်:\n${editingHerb.dosageMy || editingHerb.dosage || 'ဆရာဝန် သို့မဟုတ် တိုင်းရင်းဆေးဆရာနှင့် တိုင်ပင်၍ သောက်သုံးပါ။'}`;
 
-    try {
-      await supabase.from('posts').insert([
-        {
-          title: postTitle,
-          content: postContent,
-          image_url: editingHerb.imageUrl || null
-        }
-      ]);
-    } catch (err) {
-      console.error('Failed to broadcast herb post:', err);
+      try {
+        await supabase.from('posts').insert([
+          {
+            title: postTitle,
+            content: postContent,
+            image_url: editingHerb.imageUrl || null
+          }
+        ]);
+      } catch (err) {
+        console.error('Failed to broadcast herb post:', err);
+      }
     }
 
     setEditingHerb(null);
     setIsNewHerb(false);
-    showNotification(language === 'my' ? 'ဆေးဖက်ဝင်အပင် အချက်အလက်ကို သိမ်းဆည်းပြီး Feed သို့ ထည့်သွင်းလိုက်ပါပြီ' : 'Medicinal plant updated and broadcasted to Live Feed!');
+    showNotification(
+      language === 'my' 
+        ? (isNewHerb ? 'ဆေးဖက်ဝင်အပင် အသစ်ကို သိမ်းဆည်းပြီး ပင်မစာမျက်နှာ (Home Screen) သို့ တင်ပေးလိုက်ပါပြီ' : 'ဆေးဖက်ဝင်အပင် အချက်အလက်ကို ပြင်ဆင်သိမ်းဆည်းပြီးပါပြီ') 
+        : (isNewHerb ? 'New plant added and broadcasted to Home Screen!' : 'Plant details updated successfully.')
+    );
   };
 
   const handleDeleteHerb = (id: string) => {
@@ -240,33 +246,39 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
     setSymptoms(updated);
     saveManagedSymptoms(updated);
 
-    // Auto Broadcast to Supabase Live Feed (Facebook Style for all devices)
-    const symptomName = editingSymptom.symptomNameMy || editingSymptom.symptomName;
-    const remedyText = (editingSymptom.remediesMy && editingSymptom.remediesMy.length > 0)
-      ? editingSymptom.remediesMy.join('\n• ')
-      : (editingSymptom.remedies || []).join('\n• ');
-    const precautionText = (editingSymptom.precautionsMy && editingSymptom.precautionsMy.length > 0)
-      ? editingSymptom.precautionsMy.join('\n')
-      : (editingSymptom.precautions || []).join('\n');
+    // Auto Broadcast to Supabase Live Feed ONLY when adding a NEW symptom
+    if (isNewSymptom) {
+      const symptomName = editingSymptom.symptomNameMy || editingSymptom.symptomName;
+      const remedyText = (editingSymptom.remediesMy && editingSymptom.remediesMy.length > 0)
+        ? editingSymptom.remediesMy.join('\n• ')
+        : (editingSymptom.remedies || []).join('\n• ');
+      const precautionText = (editingSymptom.precautionsMy && editingSymptom.precautionsMy.length > 0)
+        ? editingSymptom.precautionsMy.join('\n')
+        : (editingSymptom.precautions || []).join('\n');
 
-    const postTitle = `[Live] 🩺 အိမ်တွင်းကုထုံး အသစ်ဖြည့်သွင်းမှု: ${symptomName}`;
-    const postContent = `📌 ရောဂါလက္ခဏာ: ${symptomName}\n\n💡 သဘာဝ ဆေးနည်းလမ်းညွှန်း:\n• ${remedyText}\n\n⚠️ သတိပေးချက်:\n${precautionText || 'ရောဂါပြင်းထန်ပါက နီးစပ်ရာ ဆေးရုံ သို့မဟုတ် ဆရာဝန်ထံ ချက်ချင်း ပြသပါ။'}`;
+      const postTitle = `[Live] 🩺 အိမ်တွင်းကုထုံး အသစ်ဖြည့်သွင်းမှု: ${symptomName}`;
+      const postContent = `📌 ရောဂါလက္ခဏာ: ${symptomName}\n\n💡 သဘာဝ ဆေးနည်းလမ်းညွှန်း:\n• ${remedyText}\n\n⚠️ သတိပေးချက်:\n${precautionText || 'ရောဂါပြင်းထန်ပါက နီးစပ်ရာ ဆေးရုံ သို့မဟုတ် ဆရာဝန်ထံ ချက်ချင်း ပြသပါ။'}`;
 
-    try {
-      await supabase.from('posts').insert([
-        {
-          title: postTitle,
-          content: postContent,
-          image_url: null
-        }
-      ]);
-    } catch (err) {
-      console.error('Failed to broadcast symptom post:', err);
+      try {
+        await supabase.from('posts').insert([
+          {
+            title: postTitle,
+            content: postContent,
+            image_url: null
+          }
+        ]);
+      } catch (err) {
+        console.error('Failed to broadcast symptom post:', err);
+      }
     }
 
     setEditingSymptom(null);
     setIsNewSymptom(false);
-    showNotification(language === 'my' ? 'ရောဂါလက္ခဏာနှင့် ဆေးနည်းကို သိမ်းဆည်းပြီး Feed သို့ ထည့်သွင်းလိုက်ပါပြီ' : 'Symptom & remedy updated and broadcasted to Live Feed!');
+    showNotification(
+      language === 'my' 
+        ? (isNewSymptom ? 'ရောဂါလက္ခဏာနှင့် ဆေးနည်းအသစ်ကို သိမ်းဆည်းပြီး ပင်မစာမျက်နှာသို့ တင်ပေးလိုက်ပါပြီ' : 'ရောဂါလက္ခဏာနှင့် ဆေးနည်းကို ပြင်ဆင်သိမ်းဆည်းပြီးပါပြီ')
+        : (isNewSymptom ? 'New symptom added and broadcasted to Home Screen!' : 'Symptom & remedy updated successfully.')
+    );
   };
 
   const handleDeleteSymptom = (id: string) => {
@@ -297,29 +309,35 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
     setProtocols(updated);
     saveManagedProtocols(updated);
 
-    // Auto Broadcast to Supabase Live Feed (Facebook Style for all devices)
-    const protocolTitle = editingProtocol.myanmarTitle || editingProtocol.title;
-    const stepsText = (editingProtocol.steps || [])
-      .map((s, idx) => `${idx + 1}. ${s.title || 'အဆင့်'}: ${s.instruction}`)
-      .join('\n');
-    const postTitle = `[Live] 🚑 အရေးပေါ် ရှေးဦးသူနာပြု လမ်းညွှန်: ${protocolTitle}`;
-    const postContent = `📌 အရေးပေါ် အခြေအနေ: ${protocolTitle}\n\n💡 အသက်ကယ် ပြုစုနည်း အဆင့်ဆင့်:\n${stepsText}`;
+    // Auto Broadcast to Supabase Live Feed ONLY when adding a NEW protocol
+    if (isNewProtocol) {
+      const protocolTitle = editingProtocol.myanmarTitle || editingProtocol.title;
+      const stepsText = (editingProtocol.steps || [])
+        .map((s, idx) => `${idx + 1}. ${s.title || 'အဆင့်'}: ${s.instruction}`)
+        .join('\n');
+      const postTitle = `[Live] 🚑 အရေးပေါ် ရှေးဦးသူနာပြု လမ်းညွှန်: ${protocolTitle}`;
+      const postContent = `📌 အရေးပေါ် အခြေအနေ: ${protocolTitle}\n\n💡 အသက်ကယ် ပြုစုနည်း အဆင့်ဆင့်:\n${stepsText}`;
 
-    try {
-      await supabase.from('posts').insert([
-        {
-          title: postTitle,
-          content: postContent,
-          image_url: null
-        }
-      ]);
-    } catch (err) {
-      console.error('Failed to broadcast protocol post:', err);
+      try {
+        await supabase.from('posts').insert([
+          {
+            title: postTitle,
+            content: postContent,
+            image_url: null
+          }
+        ]);
+      } catch (err) {
+        console.error('Failed to broadcast protocol post:', err);
+      }
     }
 
     setEditingProtocol(null);
     setIsNewProtocol(false);
-    showNotification(language === 'my' ? 'ရှေးဦးပြုစုနည်း အဆင့်ဆင့်ကို သိမ်းဆည်းပြီး Feed သို့ ထည့်သွင်းလိုက်ပါပြီ' : 'First Aid protocol updated and broadcasted to Live Feed!');
+    showNotification(
+      language === 'my' 
+        ? (isNewProtocol ? 'ရှေးဦးပြုစုနည်း အသစ်ကို သိမ်းဆည်းပြီး ပင်မစာမျက်နှာသို့ တင်ပေးလိုက်ပါပြီ' : 'ရှေးဦးပြုစုနည်းကို ပြင်ဆင်သိမ်းဆည်းပြီးပါပြီ')
+        : (isNewProtocol ? 'New protocol added and broadcasted to Home Screen!' : 'Protocol updated successfully.')
+    );
   };
 
   const handleDeleteProtocol = (id: string) => {
@@ -350,26 +368,32 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
     setHotlines(updated);
     saveManagedHotlines(updated);
 
-    // Auto Broadcast to Supabase Live Feed (Facebook Style for all devices)
-    const hotlineName = editingHotline.myanmarName || editingHotline.name;
-    const postTitle = `[Live] 📞 အရေးပေါ် ဖုန်းနံပါတ် အသစ်: ${hotlineName}`;
-    const postContent = `📌 ဌာန/ဆေးရုံ: ${hotlineName}\n📞 ဖုန်းနံပါတ်: ${editingHotline.number}`;
+    // Auto Broadcast to Supabase Live Feed ONLY when adding a NEW hotline
+    if (isNewHotline) {
+      const hotlineName = editingHotline.myanmarName || editingHotline.name;
+      const postTitle = `[Live] 📞 အရေးပေါ် ဖုန်းနံပါတ် အသစ်: ${hotlineName}`;
+      const postContent = `📌 ဌာန/ဆေးရုံ: ${hotlineName}\n📞 ဖုန်းနံပါတ်: ${editingHotline.number}`;
 
-    try {
-      await supabase.from('posts').insert([
-        {
-          title: postTitle,
-          content: postContent,
-          image_url: null
-        }
-      ]);
-    } catch (err) {
-      console.error('Failed to broadcast hotline post:', err);
+      try {
+        await supabase.from('posts').insert([
+          {
+            title: postTitle,
+            content: postContent,
+            image_url: null
+          }
+        ]);
+      } catch (err) {
+        console.error('Failed to broadcast hotline post:', err);
+      }
     }
 
     setEditingHotline(null);
     setIsNewHotline(false);
-    showNotification(language === 'my' ? 'ဖုန်းနံပါတ်ကို သိမ်းဆည်းပြီး Feed သို့ ထည့်သွင်းလိုက်ပါပြီ' : 'Phone hotline updated and broadcasted to Live Feed!');
+    showNotification(
+      language === 'my' 
+        ? (isNewHotline ? 'ဖုန်းနံပါတ် အသစ်ကို သိမ်းဆည်းပြီး ပင်မစာမျက်နှာသို့ တင်ပေးလိုက်ပါပြီ' : 'ဖုန်းနံပါတ်ကို ပြင်ဆင်သိမ်းဆည်းပြီးပါပြီ')
+        : (isNewHotline ? 'New hotline added and broadcasted to Home Screen!' : 'Hotline updated successfully.')
+    );
   };
 
   const handleDeleteHotline = (id: string) => {
