@@ -140,6 +140,49 @@ app.get(['/api/health', '/health'], (req, res) => {
   });
 });
 
+// Diagnostic endpoint to test AI keys live
+app.get('/api/test-ai', async (req, res) => {
+  const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
+  const geminiKey = (process.env.GEMINI_API_KEY || '').trim();
+
+  const results: any = {
+    hasOpenRouterKey: Boolean(openRouterKey),
+    openRouterKeyPrefix: openRouterKey ? openRouterKey.substring(0, 10) + '...' : null,
+    hasGeminiKey: Boolean(geminiKey),
+  };
+
+  if (openRouterKey) {
+    try {
+      const orTest = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openRouterKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://show-ai-studio.com',
+          'X-Title': 'ShowCare Test',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-flash-lite',
+          messages: [{ role: 'user', content: 'Say hello in 3 words' }],
+          max_tokens: 20
+        }),
+        signal: AbortSignal.timeout(6000)
+      });
+      results.openRouterStatus = orTest.status;
+      if (orTest.ok) {
+        const d = await orTest.json();
+        results.openRouterResponse = d.choices?.[0]?.message?.content || d;
+      } else {
+        results.openRouterError = await orTest.text();
+      }
+    } catch (e: any) {
+      results.openRouterException = e.message;
+    }
+  }
+
+  res.json(results);
+});
+
 // AI Doctor Medicine Photo Identification endpoint
 app.post(['/api/medicine/identify', '/medicine/identify'], async (req, res) => {
   try {
@@ -756,13 +799,13 @@ If the user asks about non-health topics, politely reply:
 
     if (keyToUse) {
       const openRouterModels = [
-        'google/gemini-2.5-flash-lite',
         'google/gemini-2.5-flash',
         'openai/gpt-4o-mini',
-      ].filter(Boolean) as string[];
+      ];
 
       for (const modelToTry of openRouterModels) {
         try {
+          console.log(`[Chat] Attempting OpenRouter model: ${modelToTry}...`);
           const userContent: any = image ? [
             { type: 'text', text: effectiveMessage },
             { type: 'image_url', image_url: { url: image } }
@@ -785,7 +828,7 @@ If the user asks about non-health topics, politely reply:
               temperature: 0.3,
               max_tokens: 1024,
             }),
-            signal: AbortSignal.timeout(5000)
+            signal: AbortSignal.timeout(8000)
           });
 
           // If client key is invalid/expired (401/403), retry immediately with the server env key

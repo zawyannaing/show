@@ -505,17 +505,12 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
           const chatRes = await fetch('/api/chat', {
             method: 'POST',
             headers: { 
-              'Content-Type': 'application/json',
-              ...(geminiKey ? { 'x-gemini-key': geminiKey } : {}),
-              ...(openRouterKey ? { 'x-openrouter-key': openRouterKey } : {})
+              'Content-Type': 'application/json'
             },
             body: JSON.stringify({
               message: queryText || 'Please examine this medicine image',
               image: photo,
-              language: chatLanguage,
-              geminiApiKey: geminiKey,
-              openRouterApiKey: openRouterKey,
-              model: selectedModel
+              language: chatLanguage
             })
           });
           const chatData = await chatRes.json();
@@ -532,16 +527,11 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 
-            'Content-Type': 'application/json',
-            ...(geminiKey ? { 'x-gemini-key': geminiKey } : {}),
-            ...(openRouterKey ? { 'x-openrouter-key': openRouterKey } : {})
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             message: queryText,
-            language: chatLanguage,
-            geminiApiKey: geminiKey,
-            openRouterApiKey: openRouterKey,
-            model: selectedModel
+            language: chatLanguage
           }),
         });
 
