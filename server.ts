@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
@@ -1476,34 +1477,25 @@ app.post(['/api/telegram', '/telegram'], async (req, res) => {
 
 // Vite / static file setup
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
+  const distPath = path.join(process.cwd(), 'dist');
+  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+
+  if (process.env.NODE_ENV === 'production' || hasDist) {
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
+  } else {
+    const vite = await createViteServer({
+      server: { middlewareMode: true, allowedHosts: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
   }
 
   function tryListen(port: number) {
     const server = app.listen(port, '0.0.0.0', () => {
-      console.log(`TMHIP Server running on http://0.0.0.0:${port}`);
-      if (port === 3000) {
-        import('http').then(({ createServer }) => {
-          const redirectServer = createServer((req, res) => {
-            const host = req.headers.host ? req.headers.host.replace(':3001', ':3000') : 'localhost:3000';
-            res.writeHead(302, { Location: `http://${host}${req.url}` });
-            res.end();
-          });
-          redirectServer.on('error', () => {});
-          redirectServer.listen(3001, '0.0.0.0');
-        }).catch(() => {});
-      }
+      console.log(`ShowCare Server running on http://0.0.0.0:${port}`);
     });
 
     server.on('error', (err: any) => {
