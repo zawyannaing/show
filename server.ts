@@ -1552,22 +1552,13 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
-  function tryListen(port: number) {
-    const server = app.listen(port, '0.0.0.0', () => {
-      console.log(`ShowCare Server running on http://0.0.0.0:${port}`);
-    });
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`ShowCare Server running on http://0.0.0.0:${PORT}`);
+  });
 
-    server.on('error', (err: any) => {
-      if (err.code === 'EADDRINUSE') {
-        console.log(`Port ${port} in use, trying port ${port + 1}...`);
-        tryListen(port + 1);
-      } else {
-        console.error('Server error:', err);
-      }
-    });
-  }
-
-  tryListen(PORT);
+  server.on('error', (err: any) => {
+    console.error(`Server error on port ${PORT}:`, err);
+  });
 }
 
 export default app;
