@@ -80,7 +80,8 @@ async function generateWithGeminiRest(
     responseMimeType?: string;
   }
 ): Promise<{ text: string; modelUsed: string }> {
-  const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
+  // Fast-response single attempt model for ultra-low latency
+  const models = ['gemini-2.5-flash-lite', 'gemini-2.5-flash'];
   let lastError: any = null;
 
   for (const model of models) {
@@ -90,6 +91,7 @@ async function generateWithGeminiRest(
         contents: requestPayload.contents,
         generationConfig: {
           temperature: requestPayload.temperature ?? 0.3,
+          maxOutputTokens: 800,
           ...(requestPayload.responseMimeType ? { responseMimeType: requestPayload.responseMimeType } : {})
         }
       };
@@ -104,16 +106,13 @@ async function generateWithGeminiRest(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(4000)
+        signal: AbortSignal.timeout(3000)
       });
 
       if (!response.ok) {
         const errText = await response.text();
         console.warn(`Gemini REST model ${model} HTTP ${response.status}:`, errText);
-        if (response.status === 400 || response.status === 403) {
-          throw new Error(`Gemini error: ${errText}`);
-        }
-        continue;
+        throw new Error(`Gemini error: ${errText}`);
       }
 
       const data = await response.json();
@@ -121,17 +120,9 @@ async function generateWithGeminiRest(
       return { text, modelUsed: model };
     } catch (err: any) {
       lastError = err;
-      // Fast fail on network connection timeout or block to switch immediately to OpenRouter
-      if (
-        err?.name === 'TimeoutError' || 
-        err?.name === 'AbortError' ||
-        err?.code === 'UND_ERR_CONNECT_TIMEOUT' || 
-        err?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
-        (typeof err?.message === 'string' && err.message.includes('fetch failed'))
-      ) {
-        console.warn(`Gemini connection timeout/blocked on ${model}. Fast-failing to OpenRouter fallback.`);
-        throw err;
-      }
+      // Immediately fast-fail to OpenRouter on any network timeout or error
+      console.warn(`Gemini REST failed fast on ${model}, switching immediately.`);
+      break;
     }
   }
 
@@ -298,7 +289,7 @@ Do not enclose in markdown blocks, return pure JSON.`;
             temperature: 0.2,
             response_format: { type: 'json_object' }
           }),
-          signal: AbortSignal.timeout(15000)
+          signal: AbortSignal.timeout(6000)
         });
 
         // If client key failed (401/403), retry with server env key
@@ -314,7 +305,7 @@ Do not enclose in markdown blocks, return pure JSON.`;
               'X-Title': 'TMHIP Myanmar Health Platform',
             },
             body: JSON.stringify({
-              model: 'google/gemini-2.5-flash',
+              model: 'google/gemini-2.5-flash-lite',
               messages: [
                 {
                   role: 'user',
@@ -327,7 +318,7 @@ Do not enclose in markdown blocks, return pure JSON.`;
               temperature: 0.2,
               response_format: { type: 'json_object' }
             }),
-            signal: AbortSignal.timeout(15000)
+            signal: AbortSignal.timeout(6000)
           });
         }
 
@@ -765,11 +756,9 @@ If the user asks about non-health topics, politely reply:
 
     if (keyToUse) {
       const openRouterModels = [
+        'google/gemini-2.5-flash-lite',
         'google/gemini-2.5-flash',
-        selectedModel && selectedModel !== 'google/gemini-2.5-flash' ? selectedModel : null,
-        'meta-llama/llama-3.3-70b-instruct',
         'openai/gpt-4o-mini',
-        'openrouter/auto'
       ].filter(Boolean) as string[];
 
       for (const modelToTry of openRouterModels) {
@@ -785,7 +774,7 @@ If the user asks about non-health topics, politely reply:
               'Authorization': `Bearer ${keyToUse}`,
               'Content-Type': 'application/json',
               'HTTP-Referer': process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://tmhip-myanmar.app'),
-              'X-Title': 'TMHIP Myanmar Health Platform',
+              'X-Title': 'ShowCare Myanmar Health Platform',
             },
             body: JSON.stringify({
               model: modelToTry,
@@ -796,7 +785,7 @@ If the user asks about non-health topics, politely reply:
               temperature: 0.3,
               max_tokens: 1024,
             }),
-            signal: AbortSignal.timeout(12000)
+            signal: AbortSignal.timeout(5000)
           });
 
           // If client key is invalid/expired (401/403), retry immediately with the server env key
@@ -820,7 +809,7 @@ If the user asks about non-health topics, politely reply:
                 temperature: 0.3,
                 max_tokens: 1024,
               }),
-              signal: AbortSignal.timeout(12000)
+              signal: AbortSignal.timeout(5000)
             });
           }
 
