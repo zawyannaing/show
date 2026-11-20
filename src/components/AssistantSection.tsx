@@ -94,17 +94,7 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     return localStorage.getItem('tmhip_openrouter_model') || 'google/gemini-2.5-flash';
   });
-  const [showConfig, setShowConfig] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  const handleResetApiKeys = () => {
-    setGeminiKey('');
-    setOpenRouterKey('');
-    setSelectedModel('google/gemini-2.5-flash');
-    localStorage.removeItem('tmhip_gemini_key');
-    localStorage.removeItem('tmhip_openrouter_key');
-    localStorage.removeItem('tmhip_openrouter_model');
-  };
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
 
@@ -847,19 +837,13 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
                 {chatLanguage === 'my' ? '• အိမ်တွင်းကုသမှု' : '• Advisor'}
               </span>
 
-              {/* Model & AI Key Settings Pill */}
-              <button
-                onClick={() => setShowConfig((prev) => !prev)}
-                className="inline-flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200/70 dark:hover:bg-neutral-700/70 text-neutral-700 dark:text-neutral-300 text-xs font-medium transition-colors cursor-pointer border border-neutral-200 dark:border-neutral-700 shrink-0"
-                title={chatLanguage === 'my' ? 'AI ဆက်တင်များ' : 'AI Model & Settings'}
-                type="button"
-              >
-                <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span className="text-[11px] font-bold max-w-[65px] sm:max-w-none truncate">
-                  {geminiKey ? 'Gemini' : openRouterKey ? 'OpenRouter' : (chatLanguage === 'my' ? 'ဆက်တင်' : 'Settings')}
+              {/* Clean AI Online Status Indicator */}
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-semibold border border-emerald-500/20 shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[11px] font-bold">
+                  {chatLanguage === 'my' ? 'AI အသင့်ရှိ' : 'AI Online'}
                 </span>
-                <SlidersHorizontal className="w-2.5 h-2.5 opacity-60 shrink-0" />
-              </button>
+              </div>
             </div>
           </div>
 
@@ -888,103 +872,6 @@ export const AssistantSection: React.FC<AssistantSectionProps> = ({
             </button>
           </div>
         </div>
-
-        {/* AI Key Configuration Bar (Collapsible) */}
-        {showConfig && (
-          <div className="p-4 bg-neutral-50 dark:bg-neutral-950 border-b border-neutral-200 dark:border-neutral-800 animate-in fade-in duration-150">
-            <div className="max-w-3xl mx-auto space-y-3">
-              <div className="flex items-center justify-between pb-1 border-b border-neutral-200 dark:border-neutral-800">
-                <div className="flex items-center gap-2">
-                  <Key className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                  <span className="text-xs font-bold text-black dark:text-white font-myanmar">
-                    {chatLanguage === 'my' ? 'AI ဆေးပညာရှင် ဆက်တင်များ' : 'AI Doctor API Configuration'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleResetApiKeys}
-                    className="text-[11px] font-bold text-neutral-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition font-myanmar cursor-pointer flex items-center gap-1"
-                    title="Reset custom keys to system defaults"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>{chatLanguage === 'my' ? 'မူလ System Key သုံးမည်' : 'Reset to System Default'}</span>
-                  </button>
-                  <button 
-                    onClick={() => setShowConfig(false)}
-                    className="text-xs text-neutral-400 hover:text-black dark:hover:text-white cursor-pointer px-2 py-0.5"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* Gemini API Key */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
-                      <span>Google Gemini API Key</span>
-                      <span className="px-1.5 py-0.2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[9px] font-extrabold">Recommended / Free</span>
-                    </label>
-                  </div>
-                  <input
-                    type="password"
-                    value={geminiKey}
-                    onChange={(e) => {
-                      setGeminiKey(e.target.value);
-                      localStorage.setItem('tmhip_gemini_key', e.target.value);
-                    }}
-                    placeholder="AIzaSy..."
-                    className="w-full px-3 py-1.5 rounded-lg text-xs border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-black dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
-                  />
-                  <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-1">
-                    {chatLanguage === 'my' 
-                      ? 'Google AI Studio (aistudio.google.com) မှ အခမဲ့ API key ရယူ၍ ထည့်သွင်းနိုင်ပါသည်။' 
-                      : 'Get a free API key at aistudio.google.com for live clinical AI reasoning & photo scanning.'}
-                  </p>
-                </div>
-
-                {/* OpenRouter API Key */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
-                      OpenRouter API Key (Optional)
-                    </label>
-                  </div>
-                  <input
-                    type="password"
-                    value={openRouterKey}
-                    onChange={(e) => {
-                      setOpenRouterKey(e.target.value);
-                      localStorage.setItem('tmhip_openrouter_key', e.target.value);
-                    }}
-                    placeholder="sk-or-v1-..."
-                    className="w-full px-3 py-1.5 rounded-lg text-xs border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-black dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
-                  />
-                  <div className="mt-1 flex items-center justify-between">
-                    <span className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate max-w-[140px]">
-                      {selectedModel}
-                    </span>
-                    <select
-                      value={selectedModel}
-                      onChange={(e) => {
-                        setSelectedModel(e.target.value);
-                        localStorage.setItem('tmhip_openrouter_model', e.target.value);
-                      }}
-                      className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-black dark:text-white"
-                    >
-                      <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
-                      <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
-                      <option value="deepseek/deepseek-chat">DeepSeek V3</option>
-                      <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Gemini Body: History Sidebar + Main Chat Canvas */}
         <div className="flex-1 flex overflow-hidden relative">
