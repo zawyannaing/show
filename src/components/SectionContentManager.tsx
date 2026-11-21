@@ -221,9 +221,15 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
         });
 
       if (uploadError) {
-        console.warn('Storage upload error, using local base64 preview/fallback:', uploadError.message);
-        // Fallback: convert to base64 data url so plant image displays immediately
-        setEditingHerb(prev => prev ? { ...prev, imageUrl: result.previewUrl } : null);
+        console.warn('Storage upload error, using safe compressed base64 fallback:', uploadError.message);
+        // Fallback: convert to compressed base64 data url so plant image displays across all devices
+        const base64DataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => resolve(result.previewUrl);
+          reader.readAsDataURL(result.file);
+        });
+        setEditingHerb(prev => prev ? { ...prev, imageUrl: base64DataUrl } : null);
       } else {
         const { data: urlData } = supabase.storage.from('uploads').getPublicUrl(filePath);
         setEditingHerb(prev => prev ? { ...prev, imageUrl: urlData.publicUrl } : null);
