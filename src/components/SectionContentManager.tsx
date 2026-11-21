@@ -27,6 +27,7 @@ import {
 import { Herb, EmergencyProtocol, EmergencyHotline, CustomSymptomRemedy } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { compressImage, formatBytes } from '../utils/imageCompressor';
+import { uploadImage } from '../lib/storageHelper';
 import {
   getManagedHerbs,
   saveManagedHerbs,
@@ -212,28 +213,8 @@ export const SectionContentManager: React.FC<SectionManagerProps> = ({
       const cleanFileName = `plant-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
       const filePath = `admin/plants/${cleanFileName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from('uploads')
-        .upload(filePath, result.file, {
-          cacheControl: '31536000',
-          contentType: result.file.type || 'image/webp',
-          upsert: false
-        });
-
-      if (uploadError) {
-        console.warn('Storage upload error, using safe compressed base64 fallback:', uploadError.message);
-        // Fallback: convert to compressed base64 data url so plant image displays across all devices
-        const base64DataUrl = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.onerror = () => resolve(result.previewUrl);
-          reader.readAsDataURL(result.file);
-        });
-        setEditingHerb(prev => prev ? { ...prev, imageUrl: base64DataUrl } : null);
-      } else {
-        const { data: urlData } = supabase.storage.from('uploads').getPublicUrl(filePath);
-        setEditingHerb(prev => prev ? { ...prev, imageUrl: urlData.publicUrl } : null);
-      }
+      const uploadResult = await uploadImage(result.file, filePath);
+      setEditingHerb(prev => prev ? { ...prev, imageUrl: uploadResult.publicUrl } : null);
     } catch (err: any) {
       console.error('Failed to compress/upload herb image:', err);
       alert(language === 'my' ? 'ပုံတင်ရာတွင် အမှားအယွင်းရှိပါသည်' : 'Failed to upload image');

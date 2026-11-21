@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { supabase, Post } from '../lib/supabaseClient';
 import { compressImage, formatBytes } from '../utils/imageCompressor';
+import { uploadImage } from '../lib/storageHelper';
 
 interface EditPostModalProps {
   postId: string | null;
@@ -220,63 +221,8 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
         const typeFolder = postType === 'daily' ? 'daily_bulletins' : 'live_posts';
         const filePath = `${roleFolder}/${typeFolder}/${cleanFileName}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from('uploads')
-          .upload(filePath, newImageFile, {
-            cacheControl: '3600',
-            upsert: false
-          });
-
-        if (uploadError) {
-          const isRls = uploadError.message?.toLowerCase().includes('row-level security') ||
-                        uploadError.message?.toLowerCase().includes('violates row-level security');
-          
-          if (isRls) {
-            console.warn('Storage RLS triggered, compressing image to base64 fallback');
-            // Safe canvas compression fallback
-            finalImageUrl = await new Promise<string>((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                const img = new Image();
-                img.onload = () => {
-                  const canvas = document.createElement('canvas');
-                  const maxDim = 1000;
-                  let width = img.width;
-                  let height = img.height;
-                  if (width > maxDim || height > maxDim) {
-                    if (width > height) {
-                      height = Math.round((height * maxDim) / width);
-                      width = maxDim;
-                    } else {
-                      width = Math.round((width * maxDim) / height);
-                      height = maxDim;
-                    }
-                  }
-                  canvas.width = width;
-                  canvas.height = height;
-                  const ctx = canvas.getContext('2d');
-                  if (ctx) {
-                    ctx.drawImage(img, 0, 0, width, height);
-                    resolve(canvas.toDataURL('image/jpeg', 0.75));
-                  } else {
-                    resolve(reader.result as string);
-                  }
-                };
-                img.onerror = () => resolve(reader.result as string);
-                img.src = reader.result as string;
-              };
-              reader.readAsDataURL(newImageFile);
-            });
-          } else {
-            throw new Error(`Supabase Storage upload failed: ${uploadError.message}`);
-          }
-        } else {
-          const { data: urlData } = supabase.storage
-            .from('uploads')
-            .getPublicUrl(filePath);
-
-          finalImageUrl = urlData.publicUrl;
-        }
+        const uploadResult = await uploadImage(newImageFile, filePath);
+        finalImageUrl = uploadResult.publicUrl;
       }
 
       // Execute update() on 'posts' table

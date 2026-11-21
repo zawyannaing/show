@@ -377,6 +377,93 @@ app.get(['/api/storage/*', '/storage/*'], async (req, res) => {
   }
 });
 
+// Universal Server Upload Endpoint:
+// Accepts base64 encoded images from any client device, uploads directly to Supabase Storage,
+// and falls back gracefully to local static storage or proxy URL.
+app.post(['/api/upload', '/api/storage/upload'], async (req, res) => {
+  try {
+    const { filePath, fileBase64, contentType = 'image/webp', bucket = 'uploads' } = req.body || {};
+
+    if (!filePath || !fileBase64) {
+      res.status(400).json({ success: false, error: 'filePath and fileBase64 are required' });
+      return;
+    }
+
+    const cleanPath = filePath.replace(/^\/+/, '');
+    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '');
+    const buffer = Buffer.from(cleanBase64, 'base64');
+
+    const supabaseUrl = (process.env.VITE_SUPABASE_URL || 'https://wdezdoqnbvfvwnsuysfn.supabase.co').replace(/\/$/, '');
+    const supabaseKey = (process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_9HuDL813Pxf6--IR5Uyd9Q_qAh09p7R').trim();
+
+    const targetUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${cleanPath}`;
+    const publicUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${cleanPath}`;
+    let uploadSuccess = false;
+
+    try {
+      const uploadRes = await fetch(targetUrl, {
+        method: 'POST',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': contentType,
+          'x-upsert': 'true'
+        },
+        body: buffer,
+        signal: AbortSignal.timeout(15000)
+      });
+
+      if (uploadRes.ok) {
+        uploadSuccess = true;
+      } else {
+        const errText = await uploadRes.text();
+        console.warn('Supabase storage direct upload returned non-200:', uploadRes.status, errText);
+      }
+    } catch (supaErr: any) {
+      console.warn('Supabase storage network attempt failed:', supaErr?.message || supaErr);
+    }
+
+    if (uploadSuccess) {
+      res.json({
+        success: true,
+        publicUrl,
+        filePath: cleanPath,
+        storageType: 'supabase'
+      });
+      return;
+    }
+
+    // Local static fallback: Save file to local uploads directory
+    try {
+      const localUploadDir = path.join(process.cwd(), 'public', 'uploads', path.dirname(cleanPath));
+      fs.mkdirSync(localUploadDir, { recursive: true });
+      const localFilePath = path.join(process.cwd(), 'public', 'uploads', cleanPath);
+      fs.writeFileSync(localFilePath, buffer);
+
+      res.json({
+        success: true,
+        publicUrl: `/uploads/${cleanPath}`,
+        filePath: cleanPath,
+        storageType: 'local'
+      });
+      return;
+    } catch (fsErr: any) {
+      console.error('Local file write fallback error:', fsErr?.message || fsErr);
+    }
+
+    // If even local FS fails, return the data URI directly so the photo is never lost
+    res.json({
+      success: true,
+      publicUrl: `data:${contentType};base64,${cleanBase64}`,
+      filePath: cleanPath,
+      storageType: 'base64'
+    });
+  } catch (err: any) {
+    console.error('Server upload endpoint fatal error:', err?.message || err);
+    res.status(500).json({ success: false, error: err?.message || 'Server upload failed' });
+  }
+});
+
 // AI Doctor Medicine Photo Identification endpoint
 app.post(['/api/medicine/identify', '/medicine/identify'], async (req, res) => {
   try {
@@ -1714,6 +1801,12 @@ app.post(['/api/telegram', '/telegram'], async (req, res) => {
 async function startServer() {
   const distPath = path.join(process.cwd(), 'dist');
   const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+
+  const publicUploadsPath = path.join(process.cwd(), 'public', 'uploads');
+  if (!fs.existsSync(publicUploadsPath)) {
+    fs.mkdirSync(publicUploadsPath, { recursive: true });
+  }
+  app.use('/uploads', express.static(publicUploadsPath));
 
   if (process.env.NODE_ENV === 'production' || hasDist) {
     app.use(express.static(distPath));

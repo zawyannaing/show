@@ -39,6 +39,7 @@ import { SectionContentManager } from './SectionContentManager';
 import { formatFacebookDate } from '../utils/dateFormatter';
 import { EditPostModal } from './EditPostModal';
 import { compressImage, formatBytes } from '../utils/imageCompressor';
+import { uploadImage } from '../lib/storageHelper';
 import { 
   signInWithPassword, 
   signUpWithPassword,
@@ -412,63 +413,15 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
         const typeFolder = postType === 'daily' ? 'daily_bulletins' : 'live_posts';
         const filePath = `${roleFolder}/${typeFolder}/${cleanFileName}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from('uploads')
-          .upload(filePath, imageFile, {
-            cacheControl: '31536000',
-            contentType: imageFile.type || 'image/webp',
-            upsert: false
-          });
+        const uploadResult = await uploadImage(imageFile, filePath);
+        publicImageUrl = uploadResult.publicUrl;
 
-        if (uploadError) {
-          console.warn('Supabase Storage upload returned error; falling back to direct compressed Base64 image encoding so photo is always visible to all users:', uploadError.message);
+        if (uploadResult.error && uploadResult.error.toLowerCase().includes('row-level security')) {
           setIsStorageRlsError(true);
-          
-          // Auto fallback: convert to compressed base64 data URL so the post image uploads and displays immediately!
-          publicImageUrl = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              const img = new Image();
-              img.onload = () => {
-                const canvas = document.createElement('canvas');
-                let width = img.width;
-                let height = img.height;
-                const maxDim = 1000;
-                if (width > maxDim || height > maxDim) {
-                  if (width > height) {
-                    height = Math.round((height * maxDim) / width);
-                    width = maxDim;
-                  } else {
-                    width = Math.round((width * maxDim) / height);
-                    height = maxDim;
-                  }
-                }
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                  ctx.drawImage(img, 0, 0, width, height);
-                  resolve(canvas.toDataURL('image/jpeg', 0.75));
-                } else {
-                  resolve(reader.result as string);
-                }
-              };
-              img.onerror = () => resolve(reader.result as string);
-              img.src = reader.result as string;
-            };
-            reader.readAsDataURL(imageFile);
-          });
-        } else {
-          // 2. Retrieve public URL
-          const { data: urlData } = supabase.storage
-            .from('uploads')
-            .getPublicUrl(filePath);
-
-          publicImageUrl = urlData.publicUrl;
         }
       }
 
-      // 3. Insert record into 'posts' table
+      // 2. Insert record into 'posts' table
       const formattedTitle = postType === 'daily'
         ? (title.trim().startsWith('[Daily]') ? title.trim() : `[Daily] ${title.trim()}`)
         : (title.trim().startsWith('[Live]') ? title.trim() : `[Live] ${title.trim()}`);
@@ -496,16 +449,11 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
       setContent('');
       setCustomDateTime(getNowLocalDatetime());
       handleRemoveImage();
-      const usedFallback = isStorageRlsError;
       setStatusMessage({
         type: 'success',
         text: language === 'my' 
-          ? (usedFallback 
-              ? 'ပို့စ်နှင့် ပုံကို အောင်မြင်စွာ တင်ပြီးပါပြီ။ (Storage Policy မရသေးသဖြင့် Backup ဖြင့် ထည့်သွင်းထားသည်)' 
-              : 'ပို့စ်ကို အောင်မြင်စွာ တင်ပြီးပါပြီ။')
-          : (usedFallback 
-              ? 'Post and photo published successfully via smart fallback! To enable direct bucket storage, apply the SQL fix below.' 
-              : 'Post published successfully to Supabase!')
+          ? 'ပို့စ်နှင့် ပုံကို အောင်မြင်စွာ တင်ပြီးပါပြီ။' 
+          : 'Post and photo published successfully to Supabase!'
       });
 
       // Refresh list

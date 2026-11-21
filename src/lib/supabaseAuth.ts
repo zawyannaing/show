@@ -80,6 +80,25 @@ if (typeof window !== 'undefined') {
       localStorage.removeItem('hek_local_admin');
     }
   }
+
+  // Two-way synchronization with tmhip_auth_changed across all components and hooks
+  window.addEventListener('tmhip_auth_changed', () => {
+    const saved = localStorage.getItem('hek_local_admin');
+    if (saved) {
+      try {
+        cachedUser = JSON.parse(saved);
+      } catch {
+        cachedUser = null;
+      }
+      notifySubscribers();
+    } else {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        cachedSession = session;
+        cachedUser = session?.user ?? null;
+        notifySubscribers();
+      });
+    }
+  });
 }
 
 // Initialize cached user from supabase session if not local admin
@@ -163,6 +182,7 @@ export async function signInWithPassword(email: string, password: string): Promi
     cachedUser = adminUser;
     if (typeof window !== 'undefined') {
       localStorage.setItem('hek_local_admin', JSON.stringify(adminUser));
+      window.dispatchEvent(new Event('tmhip_auth_changed'));
     }
     notifySubscribers();
     return { error: null };
@@ -180,6 +200,7 @@ export async function signInWithPassword(email: string, password: string): Promi
     }
     if (typeof window !== 'undefined') {
       localStorage.removeItem('hek_local_admin');
+      window.dispatchEvent(new Event('tmhip_auth_changed'));
     }
     return { error: null };
   } catch (err: any) {
@@ -243,6 +264,7 @@ export async function signOutUser(): Promise<{ error: string | null }> {
   try {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('hek_local_admin');
+      window.dispatchEvent(new Event('tmhip_auth_changed'));
     }
     const { error } = await supabase.auth.signOut();
     cachedUser = null;
