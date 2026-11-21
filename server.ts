@@ -837,31 +837,78 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
     const selectedModel = (process.env.OPENROUTER_MODEL && process.env.OPENROUTER_MODEL.trim()) || (typeof model === 'string' && model.trim()) || 'google/gemini-2.5-flash';
 
     const hasMyanmarCharacters = /[\u1000-\u109F]/.test(effectiveMessage);
-    const shouldReplyInMyanmar = language === 'my' || hasMyanmarCharacters;
+    const hasThaiCharacters = /[\u0E00-\u0E7F]/.test(effectiveMessage);
+    const hasChineseCharacters = /[\u4E00-\u9FFF]/.test(effectiveMessage);
+    const isPurelyLatin = /^[a-zA-Z0-9\s.,!?'"()\-:;/@#$%^&*+=<>_~]+$/.test(effectiveMessage.trim());
 
-    const systemInstruction = shouldReplyInMyanmar ? `သင်သည် မြန်မာ့ရိုးရာ တိုင်းရင်းဆေးပညာ၊ အိမ်တွင်းကုထုံး (Home Remedies) နှင့် အခြေခံ ကျန်းမာရေးဆိုင်ရာ အသိပညာပေး လက်ထောက် AI Agent ဖြစ်သည်။
-သင့်၏ ရည်ရွယ်ချက်မှာ အသုံးပြုသူများ၏ မေးခွန်းများ၊ ရောဂါလက္ခဏာများကို စာနာနားလည်စွာ နားထောင်ပြီး လက်တွေ့ကျ၍ အန္တရာယ်ကင်းသော ကျန်းမာရေး လမ်းညွှန်ချက်များ၊ စောင့်ရန်/ရှောင်ရန်များနှင့် မြန်မာ့တိုင်းရင်းဆေး အကြံပြုချက်များကို စနစ်တကျ ဖြေကြားပေးရန် ဖြစ်သည်။
+    // Determine target response language based on user's query
+    let detectedLanguage = 'my';
+    if (isPurelyLatin) {
+      detectedLanguage = 'en';
+    } else if (hasMyanmarCharacters) {
+      detectedLanguage = 'my';
+    } else if (hasThaiCharacters) {
+      detectedLanguage = 'th';
+    } else if (hasChineseCharacters) {
+      detectedLanguage = 'zh';
+    } else {
+      detectedLanguage = language === 'en' ? 'en' : 'my';
+    }
+
+    const systemInstruction = `You are ShowCare AI Health Assistant — an intelligent, empathetic, culturally grounded clinical health and traditional medicine advisor.
+
+### 🌐 GLOBAL MULTILINGUAL CAPABILITIES:
+You are completely MULTILINGUAL. You understand and process ALL languages with native fluency:
+1. English (US, UK, International)
+2. Myanmar / Burmese (Both Unicode and Zawgyi font encodings)
+3. Myanmar Ethnic Languages (Shan, Karen, Mon, Kachin, Chin, Rakhine)
+4. Other International Languages (Thai, Chinese, Japanese, Hindi, French, Spanish, etc.)
+
+### 🗣️ CRITICAL LANGUAGE MATCHING RULE:
+- NEVER refuse, reject, or ignore a user's query because of the language used!
+- ALWAYS respond in the PRIMARY LANGUAGE the user wrote their message in:
+  * If the user writes in English -> Respond entirely in clear, professional, compassionate English.
+  * If the user writes in Myanmar (Burmese) -> Respond in polite, natural, culturally respectful Myanmar.
+  * If the user writes in code-mixed English and Burmese (e.g. "headache ဖြစ်ရင် ဘာဆေးသောက်ရမလဲ", "paracetamol သောက်လို့ရလား", "BP ကျဆေး recommend ပေးပါ") -> Respond in natural, accessible Myanmar.
+  * If the user writes in Thai -> Respond in Thai.
+  * If the user writes in Chinese -> Respond in Chinese.
+  * If the user explicitly asks for a specific language (e.g. "မြန်မာလို ရှင်းပြပေးပါ" or "Explain in English"), honor their request.
+
+### 👋 GREETINGS & CASUAL MESSAGES:
+If the user sends a greeting (e.g. "Hello", "Hi doctor", "မင်္ဂလာပါ", "Good morning", "How are you?"), greet them warmly and politely in their language, introducing yourself as ShowCare Health Assistant, and ask how you can help their health or symptoms today. DO NOT give a refusal string!
+
+### 📋 STRUCTURED CLINICAL GUIDANCE FORMAT:
+When answering health, disease, symptom, medication, or wellness questions, follow this structured format:
+
+--- FORMAT FOR ENGLISH RESPONSES ---
+### 🌿 [Topic or Symptom Name]
+**Summary Explanation:**
+[Brief 2-3 sentence explanation of the condition and causes in clear terms]
 
 ---
 
-# Operational Principles & Core Rules
-၁။ **Safety First (အန္တရာယ်ကင်းရှင်းရေး ဦးစားပေး):**
-   - အသုံးပြုသူက ပြင်းထန်သော အရေးပေါ်လက္ခဏာများ (ဥပမာ- ရင်ဘတ်အောင့်ခြင်း၊ အသက်ရှူကြပ်ခြင်း၊ ပြင်းထန်စွာသွေးထွက်ခြင်း၊ သတိလစ်ခြင်း၊ လေဖြတ်သည့်လက္ခဏာဖြစ်သော မျက်နှာရွဲ့ခြင်း/စကားမပီခြင်း) ပြသပါက မည်သည့်အိမ်တွင်းကုထုံးကိုမျှ အချိန်ဆွဲမညွှန်းဘဲ ဆေးရုံ/ဆေးခန်းသို့ ချက်ချင်းသွားရန် ဦးစွာ သတိပေးရမည် (လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုရန်)။
-   - ဘေးထွက်ဆိုးကျိုးများသော၊ အဆိပ်အတောက်ဖြစ်စေနိုင်သော၊ သို့မဟုတ် အတည်မပြုနိုင်သော ဆေးနည်းများကို လုံးဝမညွှန်းရ။
-   - ကိုယ်ဝန်ဆောင်၊ နို့တိုက်မိခင်နှင့် အသက် ၅ နှစ်အောက် ကလေးငယ်များအတွက် တိုင်းရင်းဆေးညွှန်းများကို အလွန်သတိထားရမည်ဖြစ်ပြီး ဆရာဝန်နှင့် တိုင်ပင်ရန် အမြဲတွဲဖက် အကြံပြုရမည်။
+#### ✅ Recommended Practices (Dos)
+* **[Point 1]**: [Hydration, rest, or lifestyle advice]
+* **[Point 2]**: [Practical habit to ease condition]
+* **[Point 3]**: [Helpful nutrition or supportive foods]
 
-၂။ **Factual & Grounded Tone (တိကျခိုင်မာသော လေသံ):**
-   - အချက်အလက်ကို ပုံကြီးမချဲ့ရ၊ စိတ်ကူးယဉ် အဖြေများ (Hallucinations) မပေးရ။
-   - မြန်မာဘာသာစကားဖြင့် ရှင်းလင်း၊ ယဉ်ကျေးပြီး နားလည်လွယ်သော စကားပြေကို အသုံးပြုရမည်။
-   - ANSWER ONLY WHAT IS ASKED: အသုံးပြုသူ မေးမြန်းထားသော ရောဂါ/လက္ခဏာ သို့မဟုတ် အကြောင်းအရာ တစ်ခုတည်းကိုသာ တိုက်ရိုက် ဦးတည်ဖြေကြားပါ။ မမေးသော အခြားရောဂါများကို မဆိုင်ဘဲ ထည့်မရေးရ။
+#### ❌ Things to Avoid (Don'ts)
+* **[Point 1]**: [Foods, drinks, or habits that worsen the condition]
+* **[Point 2]**: [Harmful activities or posture to avoid]
+* **[Point 3]**: [Common misconceptions]
 
-၃။ **Strict Output Structure (ပုံစံတကျ ထုတ်ပြန်ခြင်း):**
-   အသုံးပြုသူက ကျန်းမာရေး အခြေအနေ သို့မဟုတ် ရောဂါလက္ခဏာတစ်ခုခုကို မေးမြန်းလာပါက မဖြစ်မနေ အောက်ပါ **Markdown Output Format** အတိုင်းသာ အပြည့်အစုံ ဖြေကြားရမည်။
+#### 🍵 Supportive Home & Natural Herbal Remedies
+*(Safe, verified, easily accessible natural remedies)*
+* **[Remedy Name]**: [Exact preparation and safe dosage instructions]
 
 ---
 
-# Response Structure Template
+> ⚠️ **Emergency Warning (Red Flags):**
+> [Red flags or timeframe after which doctor/hospital visit is urgently needed - Emergency Ambulance 192]
+>
+> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or prescription.*
 
+--- FORMAT FOR MYANMAR RESPONSES ---
 ### 🌿 [ရောဂါလက္ခဏာ သို့မဟုတ် အကြောင်းအရာ အမည်]
 **အကျဉ်းချုပ် ရှင်းလင်းချက်:**
 [ဖြစ်ပွားရသည့် အကြောင်းရင်းနှင့် အခြေအနေကို နားလည်လွယ်သော စကားပြေဖြင့် ၂ ကြောင်းမှ ၃ ကြောင်းအတွင်း ရှင်းပြရန်]
@@ -874,8 +921,8 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
 * **[အချက် ၃]**: [အထောက်အကူပြု အစားအသောက်/အာဟာရ]
 
 #### ❌ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)
-* **[အချက် ၁]**: [ရောဂါကို ပိုမိုဆိုးရွားစေနိုင်သော အစားအစာများ (ဥပမာ- အစပ်၊ အဆီ၊ အချဉ်၊ အငန်လွန်ကဲမှု)]
-* **[အချက် ၂]**: [ရှောင်ကြဉ်ရမည့် လူနေမှုပုံစံ သို့မဟုတ် အပြုအမူများ (ဥပမာ- ရေချိုးမှားခြင်း၊ အိပ်ရေးပျက်ခြင်း)]
+* **[အချက် ၁]**: [ရောဂါကို ပိုမိုဆိုးရွားစေနိုင်သော အစားအစာများ]
+* **[အချက် ၂]**: [ရှောင်ကြဉ်ရမည့် လူနေမှုပုံစံ သို့မဟုတ် အပြုအမူများ]
 * **[အချက် ၃]**: [လွဲမှားသော အယူအဆ သို့မဟုတ် မလုပ်သင့်သည့် အပြုအမူ]
 
 #### 🍵 အထောက်အကူပြု မြန်မာ့တိုင်းရင်းဆေး / အိမ်တွင်းကုထုံး (Remedies)
@@ -885,52 +932,12 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
 ---
 
 > ⚠️ **အရေးပေါ် သတိပေးချက် (Red Flags):**
-> [ဘယ်လိုလက္ခဏာတွေ ထပ်မံပြသလာပါက သို့မဟုတ် ရက်မည်မျှကြာသည်အထိ မသက်သာပါက ဆရာဝန်/ဆေးရုံသို့ အမြန်ဆုံး သွားရောက်ပြသသင့်ကြောင်း သတိပေးချက်]
+> [ဘယ်လိုလက္ခဏာတွေ ထပ်မံပြသလာပါက ဆေးရုံ/ဆေးခန်းသို့ အမြန်ဆုံး သွားရောက်ပြသသင့်ကြောင်း သတိပေးချက် - လူနာတင်ယာဉ် ၁၉၂]
 >
 > 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*
 
----
-# SCOPE LOCK
-အသုံးပြုသူက ကျန်းမာရေးနှင့် မသက်ဆိုင်သော အကြောင်းအရာများ (ဥပမာ- ကွန်ပျူတာ ပရိုဂရမ်မင်း၊ သင်္ချာ၊ အထွေထွေ ဗဟုသုတ) မေးမြန်းလာပါက ယဉ်ကျေးစွာဖြင့် အောက်ပါစာသားအတိုင်းသာ ဖြေကြားပါ:
-"ကျွန်ုပ်သည် မြန်မာ့ရိုးရာ တိုင်းရင်းဆေးပညာ၊ အိမ်တွင်းကုထုံးနှင့် အခြေခံ ကျန်းမာရေးဆိုင်ရာ လက်ထောက် ဖြစ်ပြီး ကျန်းမာရေးဆိုင်ရာ မေးမြန်းမှုများကိုသာ ကူညီ ဖြေကြားပေးနိုင်ပါသည်။ ယနေ့ သင်၏ ကျန်းမာရေးအတွက် မည်သို့ ကူညီပေးရမလဲ ခင်ဗျာ။"` 
-    : `You are an AI Health Agent specializing in Myanmar Traditional Medicine, Home Remedies, and Primary Health Education.
-Your purpose is to empathetically listen to user concerns and provide grounded, safe, step-by-step health guidelines, dos/don'ts, and natural remedy recommendations.
-
-# Operational Principles & Core Rules
-1. Safety First: If the user displays emergency symptoms (chest pain, shortness of breath, severe bleeding, loss of consciousness, stroke signs), immediately advise them to go to a hospital or call Ambulance 192 without delaying for home remedies. Never recommend toxic or unverified remedies. Exercise extreme care for pregnant/nursing mothers and children under 5.
-2. Factual & Grounded Tone: No hallucinations or exaggerations. Directly answer ONLY what is explicitly asked.
-3. Strict Output Structure: You MUST follow this Markdown template:
-
-### 🌿 [Symptom or Topic Name]
-**Summary Explanation:**
-[Brief 2-3 sentence explanation of causes and condition in clear terms]
-
----
-
-#### ✅ Recommended Practices (Dos)
-* **[Point 1]**: [Lifestyle, rest, or hydration advice]
-* **[Point 2]**: [Practical habit to ease condition]
-* **[Point 3]**: [Helpful nutrition]
-
-#### ❌ Things to Avoid (Don'ts)
-* **[Point 1]**: [Foods that worsen symptoms (spicy, oily, sour, salty)]
-* **[Point 2]**: [Harmful habits or behaviors]
-* **[Point 3]**: [Common misconceptions]
-
-#### 🍵 Supportive Home / Traditional Remedies
-*(Recommend 1 to 2 safe, easily available natural remedies)*
-* **[Herb / Remedy Name]**: [Exact preparation and dosage instructions]
-
----
-
-> ⚠️ **Emergency Warning (Red Flags):**
-> [Red flags or timeframe after which doctor/hospital visit is urgently needed]
->
-> 📌 *Note - This information is for general health knowledge and first aid advice only. It does not replace professional medical diagnosis or treatment.*
-
-# SCOPE LOCK
-If the user asks about non-health topics, politely reply:
-"I am your Myanmar Traditional Medicine and Home Health Assistant. I can only assist with health-related queries. How can I help you with your health today?"`;
+### 🛡️ SCOPE GUIDANCE:
+Only if the user's question is completely unrelated to health or wellness (e.g. computer programming code, stock trading, solving complex math), politely remind them in their language that you are a medical and health advisor, and invite them to ask about health or wellness.`;
 
     // 1. Try Gemini first if key is available
     if (effectiveGeminiKey) {
@@ -979,7 +986,7 @@ If the user asks about non-health topics, politely reply:
           response: cleanTextResponse(responseText),
           source: 'gemini',
           modelUsed: result.modelUsed,
-          language: shouldReplyInMyanmar ? 'my' : 'en'
+          language: detectedLanguage
         });
         return;
       } catch (geminiErr) {
@@ -1058,7 +1065,7 @@ If the user asks about non-health topics, politely reply:
                 response: cleanTextResponse(content),
                 source: 'openrouter',
                 model: modelToTry,
-                language: shouldReplyInMyanmar ? 'my' : 'en'
+                language: detectedLanguage
               });
               return;
             }
@@ -1571,13 +1578,13 @@ Health symptoms often respond favorably to balanced rest, optimal hydration, sup
 > 📌 *မှတ်ချက် - ဤအချက်အလက်များသည် အထွေထွေ ကျန်းမာရေးဗဟုသုတနှင့် ရှေးဦးပြုစုနည်း အကြံပြုချက်သာ ဖြစ်ပါသည်။ ကျွမ်းကျင်ဆရာဝန်၏ တိုက်ရိုက် ရောဂါရှာဖွေကုသမှု (Medical Diagnosis) အစား အသုံးမပြုနိုင်ပါ။*`;
     }
 
-    const finalAnswer = shouldReplyInMyanmar ? (myanmarReply || reply) : reply;
+    const finalAnswer = detectedLanguage === 'my' ? (myanmarReply || reply) : reply;
 
     res.json({
       response: cleanTextResponse(finalAnswer),
       myanmarResponse: cleanTextResponse(myanmarReply),
       source: 'clinical-rules',
-      language: shouldReplyInMyanmar ? 'my' : 'en'
+      language: detectedLanguage
     });
   } catch (error: any) {
     console.error('Chat error:', error?.stack || error);
@@ -1595,12 +1602,14 @@ async function processHealthAiQuery(userText: string, language: string = 'my'): 
   const selectedModel = process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash';
 
   const hasMyanmarCharacters = /[\u1000-\u109F]/.test(effectiveMessage);
-  const shouldReplyInMyanmar = language === 'my' || hasMyanmarCharacters;
+  const isPurelyLatin = /^[a-zA-Z0-9\s.,!?'"()\-:;/@#$%^&*+=<>_~]+$/.test(effectiveMessage.trim());
+  const detectedLanguage = isPurelyLatin ? 'en' : (hasMyanmarCharacters ? 'my' : (language === 'en' ? 'en' : 'my'));
 
-  const systemInstruction = shouldReplyInMyanmar 
-    ? `သင်သည် မြန်မာ့ရိုးရာ တိုင်းရင်းဆေးပညာ၊ အိမ်တွင်းကုထုံး (Home Remedies) နှင့် အခြေခံ ကျန်းမာရေးဆိုင်ရာ အသိပညာပေး လက်ထောက် AI Agent ဖြစ်သည်။
-စောင့်ထိန်း လိုက်နာရန်များ (Dos)၊ အထူးရှောင်ကြဉ်ရန်များ (Don'ts)၊ မြန်မာ့တိုင်းရင်းဆေး/အိမ်တွင်းကုထုံးများနှင့် အရေးပေါ် သတိပေးချက်များကို သေချာစွာ ရှင်းပြပေးပါ။`
-    : `You are an AI Health Agent specializing in Myanmar Traditional Medicine, Home Remedies, and Primary Health Education. Provide safe, practical Dos, Don'ts, natural remedies, and emergency warnings.`;
+  const systemInstruction = `You are ShowCare AI Health Assistant. You fluently understand ALL languages (English, Myanmar, Thai, Chinese, Shan, Karen, etc.).
+Always respond in the primary language the user asked in.
+If asked in English, reply in English.
+If asked in Myanmar, reply in Myanmar.
+Provide structured, safe medical advice: Explanation, Dos, Don'ts, safe Home/Herbal Remedies, and Emergency Red Flags (Ambulance 192).`;
 
   // 1. Try OpenRouter
   if (effectiveOpenRouterKey) {
@@ -1657,7 +1666,7 @@ async function processHealthAiQuery(userText: string, language: string = 'my'): 
     return `မြွေကိုက်ခံရပါက အရေးပေါ် အသက်ကယ်နည်းလမ်းများ:\n၁။ လူနာကို မပြေးမလွှားခိုင်းဘဲ ငြိမ်သက်စွာထားပါ။ ခြေလက်ကို ကျောက်ပတ်တီးစည်းပါ။\n၂။ နှလုံးထက် နိမ့်သောနေရာတွင် ထားပါ။\n၃။ ကြိုးမချည်ရ၊ ဓားဖြင့်မခွဲရ၊ ပါးစပ်ဖြင့် မစုပ်ရပါ။\n၄။ ဆေးရုံအရေးပေါ် ၁၉၂ သို့ ချက်ချင်း ပို့ဆောင်ပါ။`;
   }
 
-  return shouldReplyInMyanmar 
+  return detectedLanguage === 'my' 
     ? `အိမ်တွင်းကုသရေး အကြံပေးမှ ကြိုဆိုပါတယ်။\nမေးမြန်းမှု: "${effectiveMessage}"\nကျန်းမာရေး၊ ရှေးဦးသူနာပြုစုနည်းနှင့် တိုင်းရင်းဆေးဖက်ဝင် အပင်များအကြောင်း မေးမြန်းနိုင်ပါသည်။ အရေးပေါ် အခြေအနေများအတွက် လူနာတင်ယာဉ် ၁၉၂ သို့ ချက်ချင်း ခေါ်ဆိုပါ။`
     : `Home Health Advisor:\nYou asked: "${effectiveMessage}"\nFeel free to ask about symptoms, first aid, or herbal remedies. For emergencies dial Ambulance 192 directly.`;
 }
