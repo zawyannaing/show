@@ -11,17 +11,26 @@ const supabaseAnonKey =
   (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SUPABASE_ANON_KEY) ||
   'sb_publishable_9HuDL813Pxf6--IR5Uyd9Q_qAh09p7R';
 
-// Resilient fetch wrapper to handle transient network errors (such as QUIC protocol drops)
+// Resilient fetch wrapper to handle transient network errors, ISP blocks, and QUIC drops
 const resilientFetch: typeof fetch = async (input, init) => {
   try {
     return await fetch(input, init);
   } catch (error) {
-    // Retry fetch on network failure (Chrome auto-negotiates back to HTTP/2 TCP when QUIC drops)
-    try {
-      return await fetch(input, init);
-    } catch (secondError) {
-      throw secondError;
+    // If direct Supabase connection fails (e.g. TypeError: Failed to fetch due to ISP blocks on *.supabase.co)
+    // automatically re-route the request via our server's /api/supabase proxy!
+    if (typeof window !== 'undefined') {
+      try {
+        const urlStr = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input));
+        if (urlStr.includes('supabase.co')) {
+          const parsed = new URL(urlStr);
+          const proxyUrl = `/api/supabase${parsed.pathname}${parsed.search}`;
+          return await fetch(proxyUrl, init);
+        }
+      } catch (proxyError) {
+        // Continue to throw original error if proxy also fails
+      }
     }
+    throw error;
   }
 };
 

@@ -225,25 +225,37 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
         finalImageUrl = uploadResult.publicUrl;
       }
 
-      // Execute update() on 'posts' table
-      const updatePayload: any = {
-        title: title.trim(),
-        content: content.trim(),
-        image_url: finalImageUrl
-      };
-      if (customDateTime) {
-        updatePayload.created_at = new Date(customDateTime).toISOString();
+      // Execute update() on 'posts' table (Try server endpoint first, fallback to Supabase client)
+      let updatedRecord: any = null;
+      try {
+        const patchRes = await fetch(`/api/posts/${postId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatePayload),
+          signal: AbortSignal.timeout(10000)
+        });
+        if (patchRes.ok) {
+          const patchJson = await patchRes.json();
+          if (patchJson?.data && patchJson.data[0]) {
+            updatedRecord = patchJson.data[0];
+          }
+        }
+      } catch (proxyErr) {
+        console.warn('Server patch attempt failed, trying Supabase client:', proxyErr);
       }
 
-      const { data: updatedRecord, error: updateError } = await supabase
-        .from('posts')
-        .update(updatePayload)
-        .eq('id', postId)
-        .select()
-        .single();
+      if (!updatedRecord) {
+        const { data, error: updateError } = await supabase
+          .from('posts')
+          .update(updatePayload)
+          .eq('id', postId)
+          .select()
+          .single();
 
-      if (updateError) {
-        throw new Error(updateError.message);
+        if (updateError) {
+          throw new Error(updateError.message);
+        }
+        updatedRecord = data;
       }
 
       setStatusMessage({
@@ -288,13 +300,25 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
     });
 
     try {
-      const { error: deleteError } = await supabase
-        .from('posts')
-        .delete()
-        .eq('id', postId);
+      let deleteSuccess = false;
+      try {
+        const delRes = await fetch(`/api/posts/${postId}`, { method: 'DELETE', signal: AbortSignal.timeout(8000) });
+        if (delRes.ok) {
+          deleteSuccess = true;
+        }
+      } catch (proxyErr) {
+        // fallback
+      }
 
-      if (deleteError) {
-        throw new Error(deleteError.message);
+      if (!deleteSuccess) {
+        const { error: deleteError } = await supabase
+          .from('posts')
+          .delete()
+          .eq('id', postId);
+
+        if (deleteError) {
+          throw new Error(deleteError.message);
+        }
       }
 
       setStatusMessage({

@@ -290,6 +290,22 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
   const fetchRecentPosts = async () => {
     setFetchingPosts(true);
     try {
+      // 1. Try server endpoint first (bypasses ISP blocks on *.supabase.co)
+      try {
+        const res = await fetch('/api/posts', { signal: AbortSignal.timeout(8000) });
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.posts && Array.isArray(json.posts)) {
+            setRecentPosts(json.posts.slice(0, 10));
+            setFetchingPosts(false);
+            return;
+          }
+        }
+      } catch (proxyErr) {
+        // fallback to Supabase client
+      }
+
+      // 2. Direct Supabase client query
       const { data, error } = await supabase
         .from('posts')
         .select('*')
@@ -421,27 +437,44 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
         }
       }
 
-      // 2. Insert record into 'posts' table
-      const formattedTitle = postType === 'daily'
-        ? (title.trim().startsWith('[Daily]') ? title.trim() : `[Daily] ${title.trim()}`)
-        : (title.trim().startsWith('[Live]') ? title.trim() : `[Live] ${title.trim()}`);
-
-      const postCreatedAt = customDateTime ? new Date(customDateTime).toISOString() : new Date().toISOString();
-
-      const { data: insertedData, error: insertError } = await supabase
-        .from('posts')
-        .insert([
-          {
+      // 2. Insert record into 'posts' table (Try server endpoint first for 100% ISP reliability, fallback to Supabase client)
+      let postInserted = false;
+      try {
+        const postRes = await fetch('/api/posts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
             title: formattedTitle,
             content: content.trim(),
             image_url: publicImageUrl,
             created_at: postCreatedAt
-          }
-        ])
-        .select();
+          }),
+          signal: AbortSignal.timeout(12000)
+        });
 
-      if (insertError) {
-        throw new Error(`Database error: ${insertError.message}`);
+        if (postRes.ok) {
+          postInserted = true;
+        }
+      } catch (proxyErr) {
+        console.warn('Server /api/posts attempt failed, trying Supabase client:', proxyErr);
+      }
+
+      if (!postInserted) {
+        const { data: insertedData, error: insertError } = await supabase
+          .from('posts')
+          .insert([
+            {
+              title: formattedTitle,
+              content: content.trim(),
+              image_url: publicImageUrl,
+              created_at: postCreatedAt
+            }
+          ])
+          .select();
+
+        if (insertError) {
+          throw new Error(`Database error: ${insertError.message}`);
+        }
       }
 
       // 4. Success Reset
@@ -479,12 +512,25 @@ export const AdminPostUpload: React.FC<AdminPostUploadProps> = ({
 
     setDeletingId(id);
     try {
-      const { error } = await supabase.from('posts').delete().eq('id', id);
-      if (error) {
-        alert(`Delete failed: ${error.message}`);
-      } else {
-        setRecentPosts(prev => prev.filter(p => p.id !== id));
+      let deleteSuccess = false;
+      try {
+        const res = await fetch(`/api/posts/${id}`, { method: 'DELETE', signal: AbortSignal.timeout(8000) });
+        if (res.ok) {
+          deleteSuccess = true;
+        }
+      } catch (proxyErr) {
+        // fallback
       }
+
+      if (!deleteSuccess) {
+        const { error } = await supabase.from('posts').delete().eq('id', id);
+        if (error) {
+          alert(`Delete failed: ${error.message}`);
+          return;
+        }
+      }
+
+      setRecentPosts(prev => prev.filter(p => p.id !== id));
     } catch (err) {
       console.error(err);
     } finally {

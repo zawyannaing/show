@@ -336,6 +336,152 @@ app.get(['/api/posts', '/posts'], async (req, res) => {
   }
 });
 
+// Create Post via Server (Bypasses Myanmar ISP blocking on client devices)
+app.post(['/api/posts', '/posts'], async (req, res) => {
+  try {
+    const supabaseUrl = (process.env.VITE_SUPABASE_URL || 'https://wdezdoqnbvfvwnsuysfn.supabase.co').replace(/\/$/, '');
+    const supabaseKey = (process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_9HuDL813Pxf6--IR5Uyd9Q_qAh09p7R').trim();
+
+    const payload = req.body;
+    const bodyArray = Array.isArray(payload) ? payload : [payload];
+
+    const restRes = await fetch(`${supabaseUrl}/rest/v1/posts`, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+      },
+      body: JSON.stringify(bodyArray),
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!restRes.ok) {
+      const errText = await restRes.text();
+      console.warn('Server Supabase posts insert error:', restRes.status, errText);
+      res.status(restRes.status).json({ error: errText });
+      return;
+    }
+
+    const data = await restRes.json();
+    res.status(201).json({ success: true, data });
+  } catch (err: any) {
+    console.error('Server posts insert exception:', err?.message || err);
+    res.status(500).json({ error: err?.message || 'Failed to insert post' });
+  }
+});
+
+// Update Post via Server
+app.patch(['/api/posts/:id', '/posts/:id'], async (req, res) => {
+  try {
+    const { id } = req.params;
+    const supabaseUrl = (process.env.VITE_SUPABASE_URL || 'https://wdezdoqnbvfvwnsuysfn.supabase.co').replace(/\/$/, '');
+    const supabaseKey = (process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_9HuDL813Pxf6--IR5Uyd9Q_qAh09p7R').trim();
+
+    const restRes = await fetch(`${supabaseUrl}/rest/v1/posts?id=eq.${id}`, {
+      method: 'PATCH',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+      },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!restRes.ok) {
+      const errText = await restRes.text();
+      res.status(restRes.status).json({ error: errText });
+      return;
+    }
+
+    const data = await restRes.json();
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to update post' });
+  }
+});
+
+// Delete Post via Server
+app.delete(['/api/posts/:id', '/posts/:id'], async (req, res) => {
+  try {
+    const { id } = req.params;
+    const supabaseUrl = (process.env.VITE_SUPABASE_URL || 'https://wdezdoqnbvfvwnsuysfn.supabase.co').replace(/\/$/, '');
+    const supabaseKey = (process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_9HuDL813Pxf6--IR5Uyd9Q_qAh09p7R').trim();
+
+    const restRes = await fetch(`${supabaseUrl}/rest/v1/posts?id=eq.${id}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!restRes.ok) {
+      const errText = await restRes.text();
+      res.status(restRes.status).json({ error: errText });
+      return;
+    }
+
+    res.json({ success: true, deletedId: id });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to delete post' });
+  }
+});
+
+// Universal Supabase Proxy: Routes all client Supabase REST & Auth calls through the server
+// to bypass ISP firewall blocks and QUIC/TLS resets on client devices.
+app.all(['/api/supabase/*', '/supabase/*'], async (req, res) => {
+  try {
+    const rawPath = req.params[0] || req.path.replace(/^\/(api\/)?supabase\//, '');
+    const cleanPath = rawPath.replace(/^\/+/, '');
+    const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+
+    const supabaseUrl = (process.env.VITE_SUPABASE_URL || 'https://wdezdoqnbvfvwnsuysfn.supabase.co').replace(/\/$/, '');
+    const defaultKey = (process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_9HuDL813Pxf6--IR5Uyd9Q_qAh09p7R').trim();
+
+    const targetUrl = `${supabaseUrl}/${cleanPath}${queryString}`;
+
+    const headers: Record<string, string> = {};
+    for (const [key, val] of Object.entries(req.headers)) {
+      if (typeof val === 'string' && !['host', 'connection', 'content-length'].includes(key.toLowerCase())) {
+        headers[key] = val;
+      }
+    }
+
+    if (!headers['apikey']) headers['apikey'] = defaultKey;
+    if (!headers['authorization']) headers['authorization'] = `Bearer ${defaultKey}`;
+
+    const fetchOptions: any = {
+      method: req.method,
+      headers,
+      signal: AbortSignal.timeout(15000)
+    };
+
+    if (!['GET', 'HEAD'].includes(req.method) && req.body) {
+      fetchOptions.body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+    }
+
+    const proxyRes = await fetch(targetUrl, fetchOptions);
+
+    res.status(proxyRes.status);
+    proxyRes.headers.forEach((val, key) => {
+      if (!['content-encoding', 'transfer-encoding'].includes(key.toLowerCase())) {
+        res.setHeader(key, val);
+      }
+    });
+
+    const buffer = Buffer.from(await proxyRes.arrayBuffer());
+    res.send(buffer);
+  } catch (err: any) {
+    console.error('Supabase proxy error:', err?.message || err);
+    res.status(500).json({ error: err?.message || 'Supabase proxy failed' });
+  }
+});
+
 // High-Speed Storage Proxy: Streams images from Supabase Storage with edge caching
 // Bypasses ISP blocking in Myanmar and delivers images in milliseconds via Cloudflare CDN
 app.get(['/api/storage/*', '/storage/*'], async (req, res) => {
